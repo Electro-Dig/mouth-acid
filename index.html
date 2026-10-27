@@ -1,0 +1,345 @@
+<!doctype html>
+<html lang="zh-CN" data-mp="local">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Mouth × Acid</title>
+<link rel="icon" href="data:,">
+<!-- 字体不阻塞首屏：加载不到（比如国内网络）就用系统字体 -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Noto+Serif+SC:wght@700&display=swap" media="print" onload="this.media='all'">
+<style>
+/* 对口型 303：摄像头看嘴型，嘴就是 303 的“共振峰”。
+   app.js = 识别（MediaPipe Face Landmarker，放在 face-worker.js 里跑）+ 映射 + 画面；worklet.js = 声音引擎。
+   视觉：「一线一色」浅色版 —— 暖白纸底、一种墨线，颜色只说声音（acid 黄 = 亮度 / 峰，红 = 重音，粉 = 第二共振峰）。
+   data-mp="local"：MediaPipe 先用 ./lib/mediapipe/，失败再走官方地址；"cdn" 只走官方地址。 */
+:root{
+  color-scheme:light;
+  --paper:#F6F3EC; --card:#FFFDF7; --slate:#E4DFD4; --ink:#1f2328; --ink-2:#5b564c; --ink-3:#8a8478;
+  --acid:#F2B42C; --acid-pale:#FBE3A0; --red:#D9483B; --pink:#E9627E; --green:#3DA37A;
+  --lw:2px; --lw2:2.5px; --r:22px;
+  --f-body:"PingFang SC","Hiragino Sans GB","Noto Sans SC","Microsoft YaHei",system-ui,sans-serif;
+  --f-title:"Noto Serif SC","Songti SC","STSong","SimSun",serif;
+  --f-num:Inter,"Segoe UI",system-ui,sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+[hidden]{display:none!important}
+#nl-badge-frame{display:none!important}
+html,body{height:100%;background:var(--paper);color:var(--ink);font-family:var(--f-body);-webkit-font-smoothing:antialiased;-webkit-tap-highlight-color:transparent}
+body{overflow:hidden;user-select:none;-webkit-user-select:none}
+button,select,input{font:inherit;color:inherit}
+button{cursor:pointer;background:var(--card);border:var(--lw) solid var(--ink);border-radius:999px;min-height:44px;padding:0 16px;font-size:14px;display:inline-flex;align-items:center;justify-content:center;gap:8px;white-space:nowrap;transition:background .12s,color .12s}
+button:hover{background:#fff}
+button:focus-visible{outline:3px solid var(--acid);outline-offset:2px}
+button[aria-pressed="true"]{background:var(--ink);color:var(--card)}
+button.primary{background:var(--acid);font-weight:700;border-width:var(--lw2)}
+button.icon{width:44px;padding:0}
+a.icon{display:inline-flex;align-items:center;justify-content:center;width:44px;height:44px;flex:none;border:var(--lw) solid var(--ink);border-radius:999px;background:var(--card);color:var(--ink)}
+a.icon:hover{background:#fff}
+.by a{color:inherit;text-decoration:underline;text-underline-offset:3px}
+.num{font-family:var(--f-num);font-variant-numeric:tabular-nums}
+
+.app{position:fixed;inset:0;display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr);gap:16px;padding:16px 24px calc(16px + env(safe-area-inset-bottom))}
+/* ---- 顶栏 ---- */
+.top{display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;padding-top:env(safe-area-inset-top)}
+.brand{display:flex;flex-direction:column;gap:1px;margin-right:6px}
+.brand b{font-family:var(--f-title);font-weight:700;font-size:25px;letter-spacing:.02em;line-height:1.1}
+.brand span{font-size:12px;color:var(--ink-2)}
+.seg{display:inline-flex;border:var(--lw) solid var(--ink);border-radius:999px;padding:3px;background:var(--card)}
+.seg button{border:0;min-height:36px;padding:0 16px;background:transparent}
+.seg button[aria-pressed="true"]{background:var(--ink);color:var(--card)}
+.tog .dot{width:12px;height:12px;border-radius:50%;border:var(--lw) solid currentColor;background:transparent}
+.tog[aria-pressed="true"]{background:var(--acid);color:var(--ink)}
+.tog[aria-pressed="true"] .dot{background:var(--ink)}
+.sp{flex:1 1 12px}
+.stdot{width:14px;height:14px;border-radius:50%;border:var(--lw) solid var(--ink);background:var(--slate);flex:none}
+.stdot.ok{background:var(--green)} .stdot.wait{background:var(--acid)}
+
+/* ---- 主区 ---- */
+.stage{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);grid-template-rows:minmax(0,1fr) auto;grid-template-areas:"m s" "l r";gap:12px 20px;min-height:0}
+.left{grid-area:m} .sound{grid-area:s} .ctrl-l{grid-area:l} .ctrl-r{grid-area:r}
+.lat{font-size:13px;color:var(--ink-2);font-variant-numeric:tabular-nums;white-space:nowrap}
+.langbtn{min-width:48px;padding:0 12px;font-family:var(--f-num);font-weight:600}
+.ctrl.ctrl-l,.ctrl.ctrl-r{display:grid;grid-template-rows:44px 44px;gap:8px;padding:10px 12px;align-content:center}
+.meters{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.meter{display:flex;flex-direction:column;justify-content:center;gap:5px;padding:4px 10px;border:var(--lw) solid var(--ink);border-radius:12px;background:var(--card);min-width:0}
+.meter div:first-child{display:flex;justify-content:space-between;gap:6px;font-size:12px;white-space:nowrap}
+.meter .bar{height:8px;border:var(--lw) solid var(--ink);border-radius:5px;background:var(--card);overflow:hidden}
+.meter .bar i{display:block;height:100%;width:0;background:var(--ink)}
+.meter.cut .bar i{background:var(--acid)}
+.ctrl-l .gests{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.r1,.r2{display:grid;gap:8px;min-width:0}
+.r1 .seg{display:grid;width:100%;min-height:44px}
+.r1 .pats{grid-template-columns:repeat(5,minmax(0,1fr))} .r1 .wavegrp{grid-template-columns:repeat(2,minmax(0,1fr))}
+.r1 .seg button{padding:0 4px;min-width:0}
+.r2{grid-template-columns:auto minmax(0,1fr);align-items:center}
+.r2 .hold{width:100%}
+.left{display:flex;flex-direction:column;gap:12px;min-height:0}
+.mirror{position:relative;flex:1 1 auto;min-height:200px;border:var(--lw2) solid var(--ink);border-radius:var(--r);background:var(--slate);overflow:hidden;touch-action:none}
+.mirror video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transform:scaleX(-1);filter:saturate(.9);opacity:0;transition:opacity .3s}
+.mirror video.on{opacity:1}
+.mirror canvas{position:absolute;inset:0;width:100%;height:100%}
+.ph{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;padding-bottom:22px;gap:4px;color:var(--ink-2);font-size:13px;pointer-events:none;text-align:center}
+.ph b{font-weight:600;color:var(--ink);font-size:14px}
+.chip{position:absolute;padding:4px 10px;border-radius:999px;background:var(--card);border:var(--lw) solid var(--ink);font-size:12px;line-height:1.3}
+.tl{position:absolute;left:12px;top:12px;display:flex;gap:6px;align-items:center}
+.tl .chip{position:static}
+.tl button.chip{min-height:0;padding:4px 10px;font-size:12px;border-radius:999px}
+.chips{position:absolute;right:12px;top:12px;display:flex;gap:6px}
+.chips .chip{position:static;font-family:var(--f-num);font-weight:600}
+.flash{position:absolute;left:50%;top:14px;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;gap:6px;pointer-events:none}
+.flash span{padding:5px 14px;border-radius:999px;border:var(--lw) solid var(--ink);background:var(--card);font-weight:600;font-size:14px;animation:fl 1.1s ease forwards}
+.flash span.acc{background:var(--red);color:var(--card)} .flash span.f2{background:var(--pink)} .flash span.tr{background:var(--acid)}
+@keyframes fl{0%{opacity:0;transform:translateY(4px)}10%{opacity:1;transform:none}70%{opacity:1}100%{opacity:0;transform:translateY(-6px)}}
+.testvid{position:absolute;left:12px;bottom:12px;background:var(--acid);border-color:var(--ink)}
+
+
+
+.sound{display:flex;flex-direction:column;gap:12px;min-height:0;padding:16px 18px;border:var(--lw2) solid var(--ink);border-radius:var(--r);background:var(--card);position:relative}
+.params{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.param{display:flex;flex-direction:column;gap:2px;padding:8px 12px;border-radius:12px;border:var(--lw) solid var(--ink)}
+.param:first-child{background:var(--ink);color:var(--card)}
+.param small{font-family:var(--f-num);font-size:11px;letter-spacing:.08em;font-weight:600;display:flex;justify-content:space-between;gap:6px}
+.param small i{font-style:normal;font-family:var(--f-body);letter-spacing:0;font-weight:400;opacity:.65}
+.param b{font-family:var(--f-num);font-size:22px;font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}
+
+#sp{flex:1 1 auto;width:100%;min-height:160px;display:block}
+
+/* ---- 底栏 ---- */
+.ctrl{display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;padding:10px 14px;border:var(--lw2) solid var(--ink);border-radius:var(--r);background:var(--card)}
+.pitch{display:flex;align-items:center;gap:6px}
+.pitch .note{min-width:58px;text-align:center;display:flex;flex-direction:column;line-height:1.15}
+.pitch .note b{font-family:var(--f-num);font-size:20px;font-weight:700}
+.pitch .note small{font-size:11px;color:var(--ink-2)}
+.gest{display:flex;flex-direction:column;justify-content:center;align-items:flex-start;gap:1px;min-width:0;padding:3px 10px;border-radius:12px;border:var(--lw) solid var(--ink);background:linear-gradient(90deg,var(--slate) var(--lv,0%),var(--card) var(--lv,0%));font-size:12px;line-height:1.25;overflow:hidden;transition:color .25s}
+.gest span{font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+@media (max-width:1240px){.param small i{display:none} .param b{font-size:18px} .gest{line-height:1.15;padding:2px 8px} .gest span{white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;font-size:10.5px}}
+.gest b{font-weight:600}
+.gest span{color:var(--ink-2)}
+.gest.off{opacity:.4}
+.gest.hit{background:var(--ink);color:var(--card);transition:none}
+.gest.hit span{color:var(--card)}
+.gest.acc.hit{background:var(--red)}
+.hold.down{background:var(--pink);color:var(--ink)}
+.kbd{font-size:12px;color:var(--ink-2)}
+.clean .top,.clean .ctrl{display:none}
+.clean .param small i{display:none} .clean .app{grid-template-rows:minmax(0,1fr)} .clean .stage{grid-template-rows:minmax(0,1fr)}
+#unclean{position:fixed;top:0;right:0;width:48px;height:48px;opacity:0;z-index:6;display:none;border:0}
+.clean #unclean{display:block}
+
+/* ---- 开场 ---- */
+.ov{position:fixed;inset:0;z-index:20;display:grid;place-items:center;padding:20px;background:rgba(246,243,236,.86);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);overflow:auto}
+.ov[hidden]{display:none}
+.card{position:relative;width:100%;max-width:440px;background:var(--paper);border:var(--lw2) solid var(--ink);border-radius:26px;padding:28px 24px 22px;display:flex;flex-direction:column;gap:18px}
+.card .kick{font-family:var(--f-num);font-size:12px;font-weight:600;letter-spacing:.12em;color:var(--ink-2)}
+.card h1{font-family:var(--f-title);font-weight:700;font-size:40px;line-height:1.1}
+.card .slogan{font-family:var(--f-num);font-size:20px;font-weight:600;margin-top:-10px}
+.card p{font-size:15px;line-height:1.75}
+.shapes{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.shape{display:flex;flex-direction:column;align-items:center;gap:6px;padding:12px 4px;border:var(--lw2) solid var(--ink);border-radius:18px;background:var(--card)}
+.shape b{font-size:15px} .shape small{font-family:var(--f-num);font-size:12px;font-weight:600}
+.modes{display:flex;flex-direction:column;gap:6px;font-size:14px;line-height:1.6}
+.modes div{display:flex;gap:10px} .modes b{flex:none;width:72px}
+.go{display:flex;flex-direction:column;gap:10px}
+.card .intro-lang{position:absolute;top:20px;right:20px;min-height:36px}
+#adv{display:flex;flex-direction:column;gap:14px}
+.go .primary{min-height:54px;font-size:17px}
+.fine{font-size:12px;line-height:1.7;color:var(--ink-2)}
+
+/* ---- 校准（盖在声音区上） ---- */
+#calib{position:absolute;inset:-2.5px;z-index:4;border:var(--lw2) solid var(--ink);border-radius:var(--r);background:var(--paper);display:flex;flex-direction:column;gap:14px;padding:18px 20px}
+#calib[hidden]{display:none}
+.calhead{display:flex;justify-content:space-between;align-items:baseline}
+.calhead b{font-family:var(--f-title);font-size:22px}
+.calsteps{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}
+.calsteps i{height:10px;border-radius:5px;border:var(--lw) solid var(--ink);background:var(--card);overflow:hidden;position:relative}
+.calsteps i.done{background:var(--ink)}
+.calsteps i em{position:absolute;inset:0;width:0;background:var(--acid)}
+.calbody{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;text-align:center}
+.calbody h2{font-family:var(--f-title);font-size:28px;line-height:1.25}
+.calbody p{font-size:14px;color:var(--ink-2)}
+.calmeter{width:min(320px,100%);display:flex;flex-direction:column;gap:6px;font-size:13px}
+.calmeter div:first-child{display:flex;justify-content:space-between}
+.calmeter .bar{height:14px;border:var(--lw) solid var(--ink);border-radius:8px;background:var(--card);overflow:hidden}
+.calmeter .bar i{display:block;height:100%;width:0;background:var(--acid)}
+.calbtns{display:flex;gap:10px}
+.calbtns button{flex:1}
+
+/* ---- 设置抽屉 ---- */
+#panel{position:fixed;z-index:15;right:16px;top:calc(76px + env(safe-area-inset-top));max-height:calc(100% - 92px);width:min(360px,calc(100% - 32px));overflow:auto;background:var(--paper);border:var(--lw2) solid var(--ink);border-radius:var(--r);padding:16px;display:flex;flex-direction:column;gap:14px;font-size:14px}
+#panel[hidden]{display:none}
+#panel h3{font-size:12px;font-weight:600;color:var(--ink-2);letter-spacing:.08em}
+#panel label{display:flex;align-items:center;gap:10px;line-height:1.4;min-height:32px}
+#panel input[type=checkbox]{accent-color:var(--ink);width:18px;height:18px;flex:none}
+#panel input[type=range]{flex:1;accent-color:var(--ink)}
+#panel select{background:var(--card);border:var(--lw) solid var(--ink);border-radius:10px;padding:4px 8px}
+#panel .row{display:flex;gap:8px;flex-wrap:wrap}
+#panel .row button{min-height:38px;font-size:13px}
+#panel .note{color:var(--ink-2);font-size:12px;line-height:1.7}
+#panel kbd{font-family:var(--f-num);font-size:11px;border:1px solid var(--ink-3);border-radius:4px;padding:0 4px}
+.diag{display:grid;grid-template-columns:auto 1fr;gap:3px 12px;font-size:13px}
+.diag dt{color:var(--ink-2)} .diag dd{font-family:var(--f-num);font-variant-numeric:tabular-nums;text-align:right}
+#vout{font-family:var(--f-num);font-size:12px;line-height:1.6;color:var(--ink-2);white-space:pre-wrap}
+#toast{position:fixed;left:50%;top:calc(78px + env(safe-area-inset-top));transform:translateX(-50%);z-index:30;background:var(--ink);color:var(--card);border-radius:12px;padding:9px 16px;font-size:14px;max-width:calc(100% - 32px);text-align:center;opacity:0;transition:opacity .3s;pointer-events:none}
+#toast.on{opacity:1}
+#link{position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:3}
+
+/* ---- 窄屏 / 竖屏 ---- */
+@media (max-width:860px), (orientation:portrait) and (max-width:1000px){
+  .app{gap:10px;padding:10px 12px calc(10px + env(safe-area-inset-bottom))}
+  .brand b{font-size:20px} .brand span{display:none}
+  .top{gap:8px}
+  .lat{font-size:11px}
+  .top .tog .dot{display:none} .top .tog,.top .seg button{font-size:13px;padding:0 10px} .langbtn{min-width:40px;padding:0 8px}
+  .top .seg{order:5} .top .tog{order:6;min-height:38px;padding:0 12px} .top .sp{order:4;flex-basis:100%;height:0}
+  .stage{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,0.9fr) minmax(0,1.1fr) auto;grid-template-areas:"m" "s" "r";gap:10px}
+  .ctrl.ctrl-l{display:none}
+  .sound{padding:10px 12px;gap:8px}
+  .params{gap:6px} .param{padding:5px 8px;border-radius:10px} .param small{font-size:10px} .param b{font-size:15px} .param small i{display:none}
+  .ctrl{gap:6px;padding:6px;border-radius:18px;flex-wrap:nowrap}
+  .ctrl button{padding:0 10px;font-size:13px}
+  .ctrl .pitch .note{min-width:34px} .ctrl .pitch .note small{display:none} .ctrl .pitch .note b{font-size:16px}
+  .ctrl.ctrl-r{grid-template-rows:40px 40px;gap:6px;padding:6px} .r1 .seg{min-height:40px} .r1 .seg button{font-size:12px}
+  .ctrl .long{display:none} .top button{min-height:38px}
+  #panel{top:auto;bottom:16px;left:12px;right:12px;width:auto;max-height:78%}
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="top">
+    <div class="brand"><b>Mouth × Acid</b><span>Say wow.</span></div>
+    <div class="seg" role="group" aria-label="玩法">
+      <button id="m-free" aria-pressed="true" data-i18n="Free talk">自由说话</button>
+      <button id="m-seq" aria-pressed="false" data-i18n="Groove">跟律动</button>
+    </div>
+    <button class="tog" id="vowel" aria-pressed="false" title="咧嘴时打开第二个共振峰，能唱出 i（303 原机只有一个峰）" data-i18n-title="Smile opens a second formant so it can sing “ee” (the original 303 has one peak)"><span class="dot"></span><span data-i18n="Two peaks">两个峰</span></button>
+    <button class="tog" id="drums" aria-pressed="false"><span class="dot"></span><span data-i18n="Drums">鼓</span></button>
+    <span class="sp"></span>
+    <span class="lat" id="lat" hidden></span>
+    <i class="stdot" id="st-dot" role="status" title="还没开始"></i>
+    <button class="langbtn" id="lang-btn" title="中文 / English">EN</button>
+    <a class="icon" id="gh-link" href="https://github.com/Electro-Dig/mouth-acid" target="_blank" rel="noopener" aria-label="GitHub" title="GitHub · Built by Electro-Dig"><svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></a>
+    <button class="icon" id="set-btn" aria-label="设置" aria-pressed="false"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/></svg></button>
+  </header>
+
+  <main class="stage">
+    <section class="left" aria-label="嘴">
+      <div class="mirror" id="mirror">
+        <video id="cam" playsinline muted></video>
+        <canvas id="bv" hidden aria-hidden="true"></canvas>
+        <canvas id="ov" aria-label="嘴型"></canvas>
+        <div class="ph" id="ph"><b id="ph-b">按住拖动</b><span id="ph-s">上下张嘴，左右嘟嘴 ↔ 咧嘴</span></div>
+        <span class="chip testvid" id="testvid" hidden data-i18n="Test video, not your camera">测试视频，不是你的摄像头</span>
+        <div class="flash" id="flash" aria-live="polite"></div>
+      </div>
+    </section>
+
+    <section class="sound" aria-label="声音">
+      <div class="params">
+        <div class="param"><small>CUTOFF <i data-i18n="open">张嘴</i></small><b id="p-cut">—</b></div>
+        <div class="param"><small>RESO <i data-i18n="pucker">嘟嘴</i></small><b id="p-res">—</b></div>
+        <div class="param"><small><span id="p-env-l">ENV</span> <i data-i18n="smile">咧嘴</i></small><b id="p-env">—</b></div>
+        <div class="param"><small>REV · DLY <i data-i18n="brows">挑眉</i></small><b id="p-dly">—</b></div>
+      </div>
+      <canvas id="sp" aria-label="滤波曲线、谐波、16 步和 CUTOFF 走过的路"></canvas>
+
+      <div id="calib" hidden>
+        <div class="calhead"><b data-i18n="Calibrate">校准</b><span class="num" id="cal-n">1 / 4</span></div>
+        <div class="calsteps" id="cal-steps"><i><em></em></i><i><em></em></i><i><em></em></i><i><em></em></i></div>
+        <div class="calbody">
+          <svg id="cal-icon" width="72" height="54" viewBox="0 0 64 48" aria-hidden="true"></svg>
+          <h2 id="cal-h">闭上嘴，放松</h2>
+          <p id="cal-s">记下你平时的样子，头摆正</p>
+          <div class="calmeter"><div><span id="cal-ml">现在张开</span><span class="num" id="cal-mv">0</span></div><div class="bar"><i id="cal-mb"></i></div></div>
+        </div>
+        <div class="calbtns"><button id="cal-back" data-i18n="Back">上一步</button><button id="cal-skip" data-i18n="Skip, use defaults">跳过，用默认值</button></div>
+      </div>
+    </section>
+    <div class="ctrl ctrl-l" aria-label="动作">
+    <div class="meters">
+      <div class="meter cut"><div><span data-i18n="Open → CUTOFF">张嘴 → CUTOFF</span><span class="num" id="mv-open">0%</span></div><div class="bar"><i id="mb-open"></i></div></div>
+      <div class="meter"><div><span data-i18n="Pucker → RESO">嘟嘴 → RESO</span><span class="num" id="mv-round">0%</span></div><div class="bar"><i id="mb-round"></i></div></div>
+      <div class="meter"><div><span id="ml-wide">咧嘴 → ENV</span><span class="num" id="mv-wide">0%</span></div><div class="bar"><i id="mb-wide"></i></div></div>
+    </div>
+    <div class="gests" aria-label="动作">
+      <div class="gest acc" id="g-acc"><b data-i18n="Accent">重音</b><span data-i18n="jaw drop / nod · A">猛张嘴 / 点头 · A</span></div>
+      <div class="gest" id="g-wink"><b id="g-wink-b">换波形</b><span data-i18n="wink / close eyes · Space">单眼眨 / 闭眼 · 空格</span></div>
+      <div class="gest" id="g-brow"><b>REV · DLY</b><span data-i18n="raise brows · hold D">挑眉 · 按住 D</span></div>
+    </div>
+    </div>
+    <div class="ctrl ctrl-r" aria-label="控制">
+    <div class="r1">
+    <div class="seg wavegrp" role="group" aria-label="波形" id="wavegrp">
+      <button id="w-saw" aria-pressed="true" data-i18n="Saw">锯齿</button>
+      <button id="w-sq" aria-pressed="false" data-i18n="Square">方波</button>
+    </div>
+    <div class="seg pats" role="group" aria-label="音型" id="pats" hidden>
+      <button aria-pressed="true" data-p="0" title="芝加哥 Acid House · Phuture 式，只拧一个旋钮" data-i18n-title="Chicago acid house · Phuture style, one knob">Chicago</button><button aria-pressed="false" data-p="1" title="Raga Acid · Bhairav 音阶 + 坦普拉" data-i18n-title="Raga acid · Bhairav scale + tanpura">Raga</button><button aria-pressed="false" data-p="2" title="Deep Acid · 和弦垫 + 柔和的 303" data-i18n-title="Deep acid · chord pad + a softer 303">Deep</button><button aria-pressed="false" data-p="3" title="Acid Techno · 136 BPM、失真" data-i18n-title="Acid techno · 136 BPM, distortion">Techno</button><button aria-pressed="false" data-p="4" title="极简 Acid · 两个音、长回声" data-i18n-title="Minimal acid · two notes, long echoes">Minimal</button>
+    </div>
+    </div>
+    <div class="r2">
+    <div class="pitch" role="group" aria-label="音高">
+      <button class="icon" id="tr-dn" aria-label="降调">−</button>
+      <div class="note"><b id="note">A2</b></div>
+      <button class="icon" id="tr-up" aria-label="升调">+</button>
+    </div>
+    <button class="hold" id="drop-btn" title="按住：混响和延迟一下甩满" data-i18n-title="Hold: throw reverb and delay all the way up"><span class="long" data-i18n="Hold ">按住 </span>REV · DLY</button>
+    </div>
+    </div>
+  </main>
+
+</div>
+<svg id="link" aria-hidden="true"><path id="link-p" fill="none" stroke="#1f2328" stroke-width="1.6" stroke-dasharray="5 6" style="display:none"/></svg>
+<button id="unclean" aria-label="显示按钮"></button>
+
+<div id="panel" hidden>
+  <h3 data-i18n="CAMERA">摄像头</h3>
+  <div class="note" id="st-txt">还没开始</div>
+  <div class="row"><button id="cam-btn">打开摄像头</button><button id="cal-btn" data-i18n="Recalibrate">重新校准</button></div>
+  <label><span data-i18n="Beauty">美颜</span> <select id="beauty-s"><option value="0" data-i18n="Off">关</option><option value="1" data-i18n="Light">轻</option><option value="2" data-i18n="Medium">中</option></select></label>
+  <div class="note" data-i18n="Video stays on this device and is never uploaded. Face tracking: Google MediaPipe Face Landmarker (Apache 2.0).">画面只在本机处理，不上传。识别用 Google MediaPipe Face Landmarker（Apache 2.0）。</div>
+  <div id="adv" hidden>
+  <h3 data-i18n="GESTURES">动作</h3>
+  <label><input type="checkbox" data-g="jaw" checked><span data-i18n="Sudden jaw drop = accent">突然张嘴 = 重音</span></label>
+  <label><input type="checkbox" data-g="nod" checked><span data-i18n="Nod = accent">点头 = 重音</span></label>
+  <label><input type="checkbox" data-g="wink" checked><span data-i18n="Wink / close eyes 0.6 s = next pattern (wave in free talk)">单眼眨 / 闭眼 0.6 秒 = 换音型（自由说话里换波形）</span></label>
+  <label><input type="checkbox" data-g="brow" checked><span data-i18n="Raise brows = reverb + delay">挑眉 = 混响 + 延迟</span></label>
+  <h3 data-i18n="FEEL">手感</h3>
+  <label><span data-i18n="Fast">跟手</span><input type="range" id="smooth" min="0" max="1" step="0.05" value="0"><span data-i18n="Steady">稳</span></label>
+  <label><span data-i18n="Octave">音区</span> <select id="oct"><option value="-1" data-i18n="Low">低</option><option value="0" selected data-i18n="Mid">中</option><option value="1" data-i18n="High">高</option></select></label>
+  <h3 data-i18n="LATENCY">延迟</h3>
+  <dl class="diag" id="diag"></dl>
+  <div class="row"><button id="diag-reset" data-i18n="Reset stats">统计清零</button><button id="diag-export" data-i18n="Export JSON">导出 JSON</button></div>
+  <div class="note" data-i18n="Capture → control: from the camera taking a frame to the sound getting new parameters. Excludes smoothing, audio output and speakers.">采集→控制：摄像头拍下这一帧，到声音收到新参数。不含滤波平滑、声卡输出和扬声器。</div>
+  <h3 data-i18n="RECORDING">录屏</h3>
+  <div class="row"><button id="clean-btn" data-i18n="Hide controls">隐藏按钮</button><button id="cal-clear" data-i18n="Clear calibration">清除校准</button></div>
+  <h3 data-i18n="SOUND CHECK">声音自检</h3>
+  <div class="row"><button id="verify" data-i18n="Offline check">离线检查</button></div>
+  <div id="vout"></div>
+  <h3 data-i18n="KEYBOARD">键盘</h3>
+  <div class="note" data-i18n="&lt;kbd&gt;1&lt;/kbd&gt; &lt;kbd&gt;2&lt;/kbd&gt; mode · &lt;kbd&gt;←&lt;/kbd&gt; &lt;kbd&gt;→&lt;/kbd&gt; transpose · &lt;kbd&gt;Space&lt;/kbd&gt; next pattern · &lt;kbd&gt;A&lt;/kbd&gt; accent · hold &lt;kbd&gt;D&lt;/kbd&gt; = reverb + delay · &lt;kbd&gt;V&lt;/kbd&gt; two peaks · &lt;kbd&gt;B&lt;/kbd&gt; drums · &lt;kbd&gt;C&lt;/kbd&gt; calibrate · &lt;kbd&gt;H&lt;/kbd&gt; recording mode · &lt;kbd&gt;L&lt;/kbd&gt; 中文"><kbd>1</kbd> <kbd>2</kbd> 换玩法 · <kbd>←</kbd> <kbd>→</kbd> 移调 · <kbd>空格</kbd> 换音型 · <kbd>A</kbd> 重音 · 按住 <kbd>D</kbd> = 混响 + 延迟甩满 · <kbd>V</kbd> 两个峰 · <kbd>B</kbd> 鼓 · <kbd>C</kbd> 校准 · <kbd>H</kbd> 录屏模式 · <kbd>L</kbd> English</div>
+  </div>
+  <p class="note by">Built by <a href="https://github.com/Electro-Dig" target="_blank" rel="noopener">Electro-Dig</a> · <a href="https://github.com/Electro-Dig/mouth-acid" target="_blank" rel="noopener">GitHub</a></p>
+</div>
+
+<div class="ov" id="intro"><div class="card">
+  <button class="langbtn intro-lang" id="intro-lang" title="中文 / English">中文</button>
+  <span class="kick" data-i18n="VISUAL INTERACTION LAB · 06">视觉交互实验室 · 06</span>
+  <h1>Mouth × Acid</h1>
+  <p class="slogan">Say wow.</p>
+  <div class="shapes">
+    <div class="shape"><svg width="64" height="48" viewBox="0 0 64 48" aria-hidden="true"><path d="M6 24 C16 6 48 6 58 24 C48 46 16 46 6 24 Z" fill="#FFFDF7" stroke="#1f2328" stroke-width="2.5"/><ellipse cx="32" cy="25" rx="16" ry="12" fill="#F2B42C" stroke="#1f2328" stroke-width="2.5"/></svg><b data-i18n="Open">张嘴</b><small>CUTOFF</small></div>
+    <div class="shape"><svg width="64" height="48" viewBox="0 0 64 48" aria-hidden="true"><path d="M18 24 C20 10 44 10 46 24 C44 38 20 38 18 24 Z" fill="#FFFDF7" stroke="#1f2328" stroke-width="2.5"/><circle cx="32" cy="24" r="6" fill="#F2B42C" stroke="#1f2328" stroke-width="2.5"/></svg><b data-i18n="Pucker">嘟嘴</b><small>RESO</small></div>
+    <div class="shape"><svg width="64" height="48" viewBox="0 0 64 48" aria-hidden="true"><path d="M2 22 C16 12 48 12 62 22 C48 34 16 34 2 22 Z" fill="#FFFDF7" stroke="#1f2328" stroke-width="2.5"/><ellipse cx="32" cy="23" rx="22" ry="4" fill="#F2B42C" stroke="#1f2328" stroke-width="2.5"/></svg><b data-i18n="Smile">咧嘴</b><small>ENV</small></div>
+  </div>
+  <div class="go">
+    <button class="primary" id="go-cam" data-i18n="Start with camera">打开摄像头开始</button>
+    <button id="go-ptr" data-i18n="Use mouse / touch">用鼠标 / 手指</button>
+  </div>
+  <p class="fine" data-i18n="Video stays on this device. First load is about 13 MB. Headphones recommended.">画面只在本机处理，不上传。第一次加载约 13 MB。建议戴耳机。</p>
+  <p class="fine by">Built by <a href="https://github.com/Electro-Dig" target="_blank" rel="noopener">Electro-Dig</a> · <a href="https://github.com/Electro-Dig/mouth-acid" target="_blank" rel="noopener">GitHub</a></p>
+</div></div>
+<div id="toast" role="status"></div>
+<script type="module" src="app.js?v=16"></script>
+</body>
+</html>
