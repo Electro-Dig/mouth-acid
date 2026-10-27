@@ -2,7 +2,7 @@
 
 Say wow. Play a TB-303-style acid line with your face.
 
-**Try it:** https://visual-interaction-lab.netlify.app/06-lipsync-303/
+**Try it:** https://mouth-acid.netlify.app
 
 | Face | Sound |
 |---|---|
