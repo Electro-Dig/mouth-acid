@@ -144,6 +144,13 @@ a.icon:hover{background:#fff}
 #adv{display:flex;flex-direction:column;gap:14px}
 .go .primary{min-height:54px;font-size:17px}
 .fine{font-size:12px;line-height:1.7;color:var(--ink-2)}
+.tips{display:flex;gap:10px;align-items:flex-start;font-size:12.5px;line-height:1.7;color:#8a6212}
+.tips b{flex:none;margin-top:2px;padding:1px 8px;border-radius:999px;background:var(--acid-pale);border:1px solid #d9a63a;font-family:var(--f-num);font-size:10.5px;font-weight:700;letter-spacing:.12em;color:#6b4a08}
+.byline{display:flex;align-items:center;justify-content:space-between;gap:12px;padding-top:12px;border-top:1.5px dashed var(--slate);font-family:var(--f-num);font-size:11px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3)}
+.byline .soc{display:flex;gap:8px}
+.byline .soc a{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;border:1.5px solid var(--ink);border-radius:50%;color:var(--ink);background:var(--card)}
+.byline .soc a:hover{background:var(--acid)}
+.src{color:var(--ink-2);font-size:12px} .src a{color:inherit;text-decoration:underline;text-underline-offset:3px}
 
 /* ---- 校准（盖在声音区上） ---- */
 #calib{position:absolute;inset:-2.5px;z-index:4;border:var(--lw2) solid var(--ink);border-radius:var(--r);background:var(--paper);display:flex;flex-direction:column;gap:14px;padding:18px 20px}
@@ -319,7 +326,8 @@ a.icon:hover{background:#fff}
   <h3 data-i18n="KEYBOARD">键盘</h3>
   <div class="note" data-i18n="&lt;kbd&gt;1&lt;/kbd&gt; &lt;kbd&gt;2&lt;/kbd&gt; mode · &lt;kbd&gt;←&lt;/kbd&gt; &lt;kbd&gt;→&lt;/kbd&gt; transpose · &lt;kbd&gt;Space&lt;/kbd&gt; next pattern · &lt;kbd&gt;A&lt;/kbd&gt; accent · hold &lt;kbd&gt;D&lt;/kbd&gt; = reverb + delay · &lt;kbd&gt;V&lt;/kbd&gt; two peaks · &lt;kbd&gt;B&lt;/kbd&gt; drums · &lt;kbd&gt;C&lt;/kbd&gt; calibrate · &lt;kbd&gt;H&lt;/kbd&gt; recording mode · &lt;kbd&gt;L&lt;/kbd&gt; 中文"><kbd>1</kbd> <kbd>2</kbd> 换玩法 · <kbd>←</kbd> <kbd>→</kbd> 移调 · <kbd>空格</kbd> 换音型 · <kbd>A</kbd> 重音 · 按住 <kbd>D</kbd> = 混响 + 延迟甩满 · <kbd>V</kbd> 两个峰 · <kbd>B</kbd> 鼓 · <kbd>C</kbd> 校准 · <kbd>H</kbd> 录屏模式 · <kbd>L</kbd> English</div>
   </div>
-  <p class="note by">Built by <a href="https://github.com/Electro-Dig" target="_blank" rel="noopener">Electro-Dig</a> · <a href="https://github.com/Electro-Dig/mouth-acid" target="_blank" rel="noopener">GitHub</a></p>
+  <p class="src"><span data-i18n="Open source on">开源：</span> <a href="https://github.com/Electro-Dig/mouth-acid" target="_blank" rel="noopener">GitHub · Electro-Dig/mouth-acid</a></p>
+  <div class="byline"><span>Built by Electro-Dig</span><span class="soc"><a href="https://www.instagram.com/yunlonggong1/" target="_blank" rel="noopener" aria-label="Instagram" title="Instagram"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.5" cy="6.5" r="1" fill="currentColor" stroke="none"/></svg></a><a href="https://github.com/Electro-Dig" target="_blank" rel="noopener" aria-label="GitHub" title="GitHub"><svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></a><a href="https://space.bilibili.com/52370877" target="_blank" rel="noopener" aria-label="Bilibili" title="Bilibili"><svg width="16" height="15" viewBox="0 0 24 22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M7 2l3 3M17 2l-3 3"/><rect x="2" y="5" width="20" height="15" rx="4"/><path d="M8 11v2M16 11v2"/></svg></a></span></div>
 </div>
 
 <div class="ov" id="intro"><div class="card">
@@ -336,10 +344,10 @@ a.icon:hover{background:#fff}
     <button class="primary" id="go-cam" data-i18n="Start with camera">打开摄像头开始</button>
     <button id="go-ptr" data-i18n="Use mouse / touch">用鼠标 / 手指</button>
   </div>
-  <p class="fine" data-i18n="Video stays on this device. First load is about 13 MB. Headphones recommended.">画面只在本机处理，不上传。第一次加载约 13 MB。建议戴耳机。</p>
-  <p class="fine by">Built by <a href="https://github.com/Electro-Dig" target="_blank" rel="noopener">Electro-Dig</a> · <a href="https://github.com/Electro-Dig/mouth-acid" target="_blank" rel="noopener">GitHub</a></p>
+  <p class="tips"><b data-i18n="TIPS">提示</b><span data-i18n="Video stays on this device. First load is about 13 MB. Headphones recommended.">画面只在本机处理，不上传。第一次加载约 13 MB。建议戴耳机。</span></p>
+  <div class="byline"><span>Built by Electro-Dig</span><span class="soc"><a href="https://www.instagram.com/yunlonggong1/" target="_blank" rel="noopener" aria-label="Instagram" title="Instagram"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.5" cy="6.5" r="1" fill="currentColor" stroke="none"/></svg></a><a href="https://github.com/Electro-Dig" target="_blank" rel="noopener" aria-label="GitHub" title="GitHub"><svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></a><a href="https://space.bilibili.com/52370877" target="_blank" rel="noopener" aria-label="Bilibili" title="Bilibili"><svg width="16" height="15" viewBox="0 0 24 22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M7 2l3 3M17 2l-3 3"/><rect x="2" y="5" width="20" height="15" rx="4"/><path d="M8 11v2M16 11v2"/></svg></a></span></div>
 </div></div>
 <div id="toast" role="status"></div>
-<script type="module" src="app.js?v=16"></script>
+<script type="module" src="app.js?v=17"></script>
 </body>
 </html>
