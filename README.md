@@ -17,10 +17,6 @@ Two modes: **Free talk** (your mouth opens the sound) and **Groove** (a 16-step 
 
 Video stays on your device and is never uploaded. Headphones recommended.
 
-## 用脸部表情演奏 Acid
-
-张嘴拧 CUTOFF，嘟嘴拧 RESO，咧嘴拧 ENV / 第二个峰；突然张嘴或点头是重音，眨一只眼换音型，挑眉甩混响和延迟。没有摄像头也可以用鼠标或手指拖。画面只在本机处理，不上传。
-
 ## Run locally
 
 Any static server works, for example:
