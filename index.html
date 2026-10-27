@@ -140,6 +140,12 @@ a.icon:hover{background:#fff}
 .modes{display:flex;flex-direction:column;gap:6px;font-size:14px;line-height:1.6}
 .modes div{display:flex;gap:10px} .modes b{flex:none;width:72px}
 .go{display:flex;flex-direction:column;gap:10px}
+.mload{display:flex;flex-direction:column;gap:6px;font-family:var(--f-num);font-size:12px;font-weight:600;color:var(--ink-2)}
+.mload i,.pbar{display:block;height:7px;border:1.5px solid var(--ink);border-radius:99px;overflow:hidden;background:var(--card)}
+.mload i b,.pbar b{display:block;height:100%;width:0;background:var(--acid);transition:width .25s}
+.mload.ok i b{background:var(--green)}
+.mload.bad{color:var(--red);font-family:var(--f-body);line-height:1.6} .mload.bad i{display:none}
+.pbar{width:min(260px,60%);margin-top:6px}
 .card .intro-lang{position:absolute;top:20px;right:20px;min-height:36px}
 #adv{display:flex;flex-direction:column;gap:14px}
 .go .primary{min-height:54px;font-size:17px}
@@ -235,7 +241,7 @@ a.icon:hover{background:#fff}
         <video id="cam" playsinline muted></video>
         <canvas id="bv" hidden aria-hidden="true"></canvas>
         <canvas id="ov" aria-label="嘴型"></canvas>
-        <div class="ph" id="ph"><b id="ph-b">按住拖动</b><span id="ph-s">上下张嘴，左右嘟嘴 ↔ 咧嘴</span></div>
+        <div class="ph" id="ph"><b id="ph-b">按住拖动</b><span id="ph-s">上下张嘴，左右嘟嘴 ↔ 咧嘴</span><i class="pbar" id="ph-bar" hidden><b id="ph-bar-b"></b></i></div>
         <span class="chip testvid" id="testvid" hidden data-i18n="Test video, not your camera">测试视频，不是你的摄像头</span>
         <div class="flash" id="flash" aria-live="polite"></div>
       </div>
@@ -303,6 +309,7 @@ a.icon:hover{background:#fff}
   <h3 data-i18n="CAMERA">摄像头</h3>
   <div class="note" id="st-txt">还没开始</div>
   <div class="row"><button id="cam-btn">打开摄像头</button><button id="cal-btn" data-i18n="Recalibrate">重新校准</button></div>
+  <label id="cam-pick" hidden><span data-i18n="Camera">摄像头</span> <select id="cam-s" style="flex:1;min-width:0"></select></label>
   <label><span data-i18n="Beauty">美颜</span> <select id="beauty-s"><option value="0" data-i18n="Off">关</option><option value="1" data-i18n="Light">轻</option><option value="2" data-i18n="Medium">中</option></select></label>
   <div class="note" data-i18n="Video stays on this device and is never uploaded. Face tracking: Google MediaPipe Face Landmarker (Apache 2.0).">画面只在本机处理，不上传。识别用 Google MediaPipe Face Landmarker（Apache 2.0）。</div>
   <div id="adv" hidden>
@@ -344,10 +351,11 @@ a.icon:hover{background:#fff}
     <button class="primary" id="go-cam" data-i18n="Start with camera">打开摄像头开始</button>
     <button id="go-ptr" data-i18n="Use mouse / touch">用鼠标 / 手指</button>
   </div>
-  <p class="tips"><b data-i18n="TIPS">提示</b><span data-i18n="Video stays on this device. First load is about 13 MB. Headphones recommended.">画面只在本机处理，不上传。第一次加载约 13 MB。建议戴耳机。</span></p>
+  <div class="mload" id="intro-load"><span id="intro-load-t">Loading face model 0%</span><i><b id="intro-load-b"></b></i></div>
+  <p class="tips"><b data-i18n="TIPS">提示</b><span data-i18n="Video stays on this device. First load is about 6 MB. Headphones recommended.">画面只在本机处理，不上传。第一次加载约 6 MB。建议戴耳机。</span></p>
   <div class="byline"><span>Built by Electro-Dig</span><span class="soc"><a href="https://www.instagram.com/yunlonggong1/" target="_blank" rel="noopener" aria-label="Instagram" title="Instagram"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.5" cy="6.5" r="1" fill="currentColor" stroke="none"/></svg></a><a href="https://github.com/Electro-Dig" target="_blank" rel="noopener" aria-label="GitHub" title="GitHub"><svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></a><a href="https://space.bilibili.com/52370877" target="_blank" rel="noopener" aria-label="Bilibili" title="Bilibili"><svg width="16" height="15" viewBox="0 0 24 22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M7 2l3 3M17 2l-3 3"/><rect x="2" y="5" width="20" height="15" rx="4"/><path d="M8 11v2M16 11v2"/></svg></a></span></div>
 </div></div>
 <div id="toast" role="status"></div>
-<script type="module" src="app.js?v=17"></script>
+<script type="module" src="app.js?v=19"></script>
 </body>
 </html>

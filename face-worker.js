@@ -8,9 +8,9 @@
 self.dbg = () => {};
 const BS = ['mouthPucker', 'mouthFunnel', 'browInnerUp', 'browOuterUpLeft', 'browOuterUpRight', 'eyeBlinkLeft', 'eyeBlinkRight', 'jawOpen'];
 const models = {}, lastTs = {};
-let mp = null, files = null, srcName = '', modelPath = '', first = null;
+let mp = null, files = null, srcName = '', modelPath = '', modelBuf = null, first = null;
 async function create(delegate) {
-  const opts = { baseOptions: { modelAssetPath: modelPath, delegate }, runningMode: 'VIDEO', numFaces: 1, outputFaceBlendshapes: true,
+  const opts = { baseOptions: modelBuf ? { modelAssetBuffer: modelBuf, delegate } : { modelAssetPath: modelPath, delegate }, runningMode: 'VIDEO', numFaces: 1, outputFaceBlendshapes: true,
     minFaceDetectionConfidence: 0.5, minFacePresenceConfidence: 0.5, minTrackingConfidence: 0.5 };
   if (delegate === 'GPU') opts.canvas = new OffscreenCanvas(640, 480);
   const m = await mp.FaceLandmarker.createFromOptions(files, opts);
@@ -24,6 +24,17 @@ self.onmessage = async ({ data }) => {
   try {
     if (data.type === 'init') {
       let err = null;
+      // 主线程已经下好了 wasm（blob 地址）和模型（ArrayBuffer）：直接用，不再下第二遍
+      if (data.pre) {
+        try {
+          mp = await import(data.pre.js); files = { wasmLoaderPath: data.pre.loader, wasmBinaryPath: data.pre.bin }; srcName = data.pre.name; modelBuf = new Uint8Array(data.pre.model);
+          for (const d of data.delegates) {
+            try { const warm = await create(d); first = d; self.postMessage({ type: 'ready', backend: d, src: srcName + ' · 预下载', warm }); return; }
+            catch (e) { err = e; }
+          }
+        } catch (e) { err = e; }
+        modelBuf = null;
+      }
       for (const src of data.srcs) {
         try { mp = await import(src.js); files = await mp.FilesetResolver.forVisionTasks(src.wasm); srcName = src.name; modelPath = src.model; } catch (e) { err = e; mp = null; continue; }
         for (const d of data.delegates) {

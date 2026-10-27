@@ -27,6 +27,36 @@ const MP_LOCAL = { name: '本地', js: abs('./lib/mediapipe/vision_bundle.mjs'),
 const MP_CDN = { name: '官方地址', js: `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VER}/vision_bundle.mjs`, wasm: `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VER}/wasm`,
   model: 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task' };
 const mpSources = () => document.documentElement.dataset.mp === 'cdn' || Q.get('mp') === 'cdn' ? [MP_CDN] : [MP_LOCAL, MP_CDN];
+// 第一次打开要下约 6 MB（wasm 2.6 MB 压缩后 + 模型 3.7 MB）。以前点了开始才下、两个文件一个接一个、下完才出画面：慢网要等 20 秒，还是黑盒。
+// 现在一打开网页就同时下两个，开始页和画面上都有进度条；total 是解压后的字节数（Netlify 对 wasm 用 br 压缩，读到的是解压后的）
+const PRE = { got: { wasm: 0, model: 0 }, total: { wasm: 9423986, model: 3758596 }, done: false, err: null, p: null };
+const preFrac = () => PRE.done ? 1 : Math.min(0.99, (PRE.got.wasm + PRE.got.model) / (PRE.total.wasm + PRE.total.model));
+async function grab(url, k) {
+  const r = await fetch(url);
+  if (!r.ok || !r.body) throw new Error(url + ' ' + r.status);
+  const len = +r.headers.get('content-length') || 0;
+  if (len && !r.headers.get('content-encoding')) PRE.total[k] = len;
+  const rd = r.body.getReader(), parts = [];
+  for (;;) { const { done, value } = await rd.read(); if (done) break; parts.push(value); PRE.got[k] += value.length; }
+  return new Blob(parts);
+}
+function preload() {
+  if (!PRE.p) PRE.p = (async () => {
+    const src = mpSources()[0];
+    // 两个小脚本（bundle 和 wasm 加载器）也一起先下进缓存，不然 Worker 要等大文件下完才去拿它们（实测多等 3 秒）
+    for (const u of [src.js, src.wasm + '/vision_wasm_internal.js']) fetch(u).then(r => r.blob()).catch(() => {});
+    const [w, m] = await Promise.all([grab(src.wasm + '/vision_wasm_internal.wasm', 'wasm'), grab(src.model, 'model')]);
+    PRE.done = true;
+    return { src, bin: URL.createObjectURL(new Blob([w], { type: 'application/wasm' })), model: await m.arrayBuffer() };
+  })().catch(e => { PRE.err = e; console.warn('[06] 预下载没成功，改走原来的地址', e); return null; });
+  return PRE.p;
+}
+// Edge 的「增强安全性」（默认“平衡”：不常去的网站自动打开）会关掉 JS / WebAssembly 的 JIT：识别模型要么起不来，要么慢得像卡死
+const IS_EDGE = /Edg\//.test(navigator.userAgent), NO_WASM = typeof WebAssembly !== 'object';
+let recFail = null;
+const edgeTip = () => IS_EDGE ? L('Edge 用户：点地址栏左边的锁图标 → 关掉「增强此网站的安全性」，再刷新页面；或者换 Chrome。', 'In Edge: click the lock in the address bar → turn off “Enhanced security for this site”, then reload. Or try Chrome.')
+  : L('试试 Chrome，或者先用鼠标 / 手指玩。', 'Try Chrome, or play with mouse / touch.');
+const loadText = () => recDone ? L('识别模型已就绪', 'Face model ready') : PRE.err ? L('加载识别模型…', 'Loading face model…') : PRE.done ? L('准备识别模型…', 'Starting face model…') : L('加载识别模型 ', 'Loading face model ') + Math.round(preFrac() * 100) + '%';
 
 /* ---------------- 音型：从“Acid 的八种玩法”（D:\claude\acid-learn\site\widgets.js）搬来 5 种 ----------------
    不搬：两台 303 对话、拧到尖叫（失真 Acid）、Acid Breaks。
@@ -57,13 +87,13 @@ const saved = store.get('lip303-settings', {});
 const S = {
   mode: 'free', input: 'none', vowel: !!saved.vowel, drums: false, drumsTouched: false, wave: saved.wave ? 1 : 0, oct: saved.oct || 0,
   lang: Q.get('lang') || saved.lang || 'en',   // 默认英文；开始页右上角可切中文
-  smooth: saved.smooth != null ? saved.smooth : 0, beauty: Q.get('beauty') != null ? +Q.get('beauty') : saved.beauty != null ? saved.beauty : 1, clean: Q.has('clean'),
+  camId: saved.camId || '', smooth: saved.smooth != null ? saved.smooth : 0, beauty: Q.get('beauty') != null ? +Q.get('beauty') : saved.beauty != null ? saved.beauty : 1, clean: Q.has('clean'),
   gest: { jaw: true, nod: true, wink: true, brow: true, ...(saved.gest || {}) },
   manTr: 0, pat: 0, dropHold: false, gate: false,
   camOn: false, face: false, lastFaceAt: -1e9, testVideo: Q.get('video'),
   ptr: { down: false, x: 0.5, y: 0.75, id: null },
 };
-const saveSettings = () => store.set('lip303-settings', { lang: S.lang, vowel: S.vowel, wave: S.wave, oct: S.oct, smooth: S.smooth, beauty: S.beauty, gest: S.gest });
+const saveSettings = () => store.set('lip303-settings', { camId: S.camId, lang: S.lang, vowel: S.vowel, wave: S.wave, oct: S.oct, smooth: S.smooth, beauty: S.beauty, gest: S.gest });
 const isCam = () => S.input === 'camera' || S.input === 'video';
 // 中英文：页面上的元素在 data-i18n 里直接写英文；程序里的字用 L('中文', 'English')
 const L = (zh, en) => S.lang === 'en' ? en : zh;
@@ -183,31 +213,35 @@ async function makeAudio() {
 }
 
 /* ---------------- 识别：Worker 优先，不行就在主线程跑 ---------------- */
-let worker = null, mainLM = null, recReady = null, stream = null, busy = false, lastFrame = -1, fid = 0, latest = { frame: -1, now: 0 };
+let recDone = false, worker = null, mainLM = null, recReady = null, stream = null, busy = false, lastFrame = -1, fid = 0, latest = { frame: -1, now: 0 };
 const inflight = new Map();
 function initRecognizer() {
   if (recReady) return recReady;
   recReady = (async () => {
     if (!Q.has('main') && typeof Worker !== 'undefined' && typeof OffscreenCanvas !== 'undefined') {
-      try { await initWorker(); return; } catch (e) { console.warn('[06] Worker 识别没起来，改在主线程跑：', e); if (worker) worker.terminate(); worker = null; }
+      try { await initWorker(await preload()); return; } catch (e) { console.warn('[06] Worker 识别没起来，改在主线程跑：', e); if (worker) worker.terminate(); worker = null; }
     }
     await initMain();
   })();
-  recReady.catch(() => { recReady = null; });
+  recReady.then(() => { recDone = true; recFail = null; }, e => { recReady = null; recFail = e; });
   return recReady;
 }
-function initWorker() {
+function initWorker(pre) {
   return new Promise((resolve, reject) => {
-    worker = new Worker('face-worker.js?v=3');
+    worker = new Worker('face-worker.js?v=4');
     const to = setTimeout(() => reject(new Error('Worker 加载超时')), 90000);
     worker.onerror = e => { clearTimeout(to); reject(new Error(e.message || 'worker error')); };
     worker.onmessage = ({ data }) => {
-      if (data.type === 'ready') { clearTimeout(to); D.cur = data.backend; D.backend = data.backend + ' · Worker'; D.src = data.src; D.warm = data.warm; resolve(); }
+      if (data.type === 'ready') { clearTimeout(to); D.cur = data.backend; D.backend = data.backend + ' · Worker'; D.src = data.src; D.warm = data.warm; resolve();
+        if (data.backend === 'CPU' && data.warm > 600) toast(L('人脸识别跑得很慢。', 'Face tracking is running very slowly. ') + edgeTip()); }   // 正常 CPU 预热 ≈ 60 ms
       else if (data.type === 'result') onResult(data.id, data.pts, data.bs, data.inference, data.d);
       else if (data.type === 'added') onAdded(data);
       else if (data.type === 'error') { if (data.id != null) { busy = false; inflight.delete(data.id); } else { clearTimeout(to); reject(new Error(data.message)); } console.warn('[06]', data.message); }
     };
-    worker.postMessage({ type: 'init', srcs: mpSources(), delegates: Q.get('delegate') ? [Q.get('delegate').toUpperCase()] : isMobile ? ['GPU', 'CPU'] : ['CPU', 'GPU'] });
+    const delegates = Q.get('delegate') ? [Q.get('delegate').toUpperCase()] : isMobile ? ['GPU', 'CPU'] : ['CPU', 'GPU'];
+    // pre：已经下好的 wasm（blob 地址）和模型（ArrayBuffer，直接转给 Worker）；没有就让 Worker 自己按地址下
+    const p = pre ? { js: pre.src.js, name: pre.src.name, loader: pre.src.wasm + '/vision_wasm_internal.js', bin: pre.bin, model: pre.model } : null;
+    worker.postMessage({ type: 'init', srcs: mpSources(), delegates, pre: p }, p ? [p.model] : []);
   });
 }
 async function initMain() {
@@ -234,12 +268,38 @@ async function startCamera() {
   if (S.testVideo) return startVideoFile(S.testVideo);
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { fallback(L('这个浏览器拿不到摄像头（需要 https），先用鼠标 / 手指玩', 'This browser can’t open the camera (needs https). Use mouse / touch for now.')); return; }
   setStatus('wait', L('打开摄像头…', 'Opening camera…'));
-  try {
-    stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: isMobile ? 30 : 60 } } });
-  } catch (e) { fallback(e.name === 'NotAllowedError' ? L('没有摄像头权限，先用鼠标 / 手指玩', 'No camera permission. Use mouse / touch for now.') : L('没找到摄像头（' + e.name + '），先用鼠标 / 手指玩', 'No camera found (' + e.name + '). Use mouse / touch for now.')); return; }
-  video.srcObject = stream;
+  let err = null;
+  try { stream = await openStream(S.camId); } catch (e) { err = e; }
+  if (!stream && S.camId) { try { stream = await openStream(''); err = null; } catch (e) { err = e; } }   // 上次选的摄像头拔掉了
+  if (!stream) { const e = err; fallback(e.name === 'NotAllowedError' ? L('没有摄像头权限，先用鼠标 / 手指玩', 'No camera permission. Use mouse / touch for now.') : L('没找到摄像头（' + e.name + '），先用鼠标 / 手指玩', 'No camera found (' + e.name + '). Use mouse / touch for now.')); return; }
+  // 默认给的是虚拟摄像头（Iriun / OBS 之类，软件没开就只有一张提示图）而且还有别的摄像头：换成真的那个（Edge 上实际遇到）
+  const t0 = stream.getVideoTracks()[0];
+  if (!S.camId && t0 && VIRT.test(t0.label)) {
+    const real = (await listCams()).find(c => c.label && !VIRT.test(c.label));
+    if (real) { try { const s2 = await openStream(real.deviceId); stream.getTracks().forEach(t => t.stop()); stream = s2; } catch (e) {} }
+  }
+  video.srcObject = stream; fillCamPicker();
   try { await video.play(); } catch (e) {}
   await startSource('camera');
+}
+const VIRT = /iriun|obs|virtual|droidcam|snap camera|manycam|xsplit|epoccam|ndi|\bcamo\b|broadcast|vcam/i;
+function openStream(id) {
+  const v = { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: isMobile ? 30 : 60 } };
+  if (id) v.deviceId = { exact: id }; else v.facingMode = 'user';
+  return navigator.mediaDevices.getUserMedia({ audio: false, video: v });
+}
+async function listCams() { try { return (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput'); } catch (e) { return []; } }
+async function fillCamPicker() {
+  const cams = await listCams(), sel = $('#cam-s'), tr = stream && stream.getVideoTracks()[0], cur = tr && tr.getSettings().deviceId;
+  sel.replaceChildren(...cams.map((c, i) => { const o = document.createElement('option'); o.value = c.deviceId; o.textContent = c.label || L('摄像头 ', 'Camera ') + (i + 1); return o; }));
+  if (cur) sel.value = cur;
+  $('#cam-pick').hidden = cams.length < 2;
+}
+async function switchCam(id) {
+  S.camId = id; saveSettings();
+  if (!stream) return;
+  try { const s2 = await openStream(id); stream.getTracks().forEach(t => t.stop()); stream = s2; video.srcObject = s2; try { await video.play(); } catch (e) {} }
+  catch (e) { toast(L('这个摄像头打不开：', 'Can’t open this camera: ') + e.name); fillCamPicker(); }
 }
 async function startVideoFile(url) {
   video.srcObject = null; video.setAttribute('muted', ''); video.muted = true; video.loop = true; video.src = url;
@@ -250,21 +310,24 @@ async function startVideoFile(url) {
   await startSource('video');
 }
 async function startSource(kind) {
+  S.camLoading = true; video.classList.add('on');
   setStatus('wait', L('加载识别模型…', 'Loading face model…'));
-  try { await initRecognizer(); } catch (e) { console.warn(e); stopCamera(); fallback(L('识别模型没加载上（网络？），先用鼠标 / 手指玩', 'Face model failed to load (network?). Use mouse / touch for now.')); return; }
-  S.camOn = true; S.input = kind; video.classList.add('on'); $('#cam-btn').textContent = L('关闭摄像头', 'Camera off'); applyBeauty();
+  try { await initRecognizer(); } catch (e) { console.warn(e); S.camLoading = false; stopCamera(); fallback(L('识别模型没加载上（网络？），先用鼠标 / 手指玩', 'Face model failed to load (network?). Use mouse / touch for now.') + ' ' + edgeTip()); return; }
+  S.camLoading = false; S.camOn = true; S.input = kind; $('#cam-btn').textContent = L('关闭摄像头', 'Camera off'); applyBeauty();
   lastFrame = -1; latest = { frame: -1, now: 0 }; busy = false; inflight.clear();
   if (video.requestVideoFrameCallback) video.requestVideoFrameCallback(onVFrame); else requestAnimationFrame(pollFrame);
   setStatus('wait', L('找脸…', 'Looking for a face…'));
   if (kind === 'camera' && !calStored()) startCalib();
   else if (kind === 'camera') toast(L('用上次的校准。换了人或位置，点“重新校准”', 'Using your last calibration. New person or spot? Recalibrate in ⚙.'));
   if (BENCH) startBench();
+  // 8 秒还没见过脸：多半是选错了摄像头
+  if (kind === 'camera') setTimeout(() => { if (S.camOn && S.input === 'camera' && !D.faces) toast(L('看不到脸。是不是选错了摄像头？在 ⚙ 设置里换一个', 'Can’t see a face. Wrong camera? Switch it in ⚙ Settings.')); }, 8000);
 }
 function stopCamera() {
   if (stream) stream.getTracks().forEach(t => t.stop()); stream = null;
   video.srcObject = null; video.removeAttribute('src'); video.load(); video.classList.remove('on'); $('#testvid').hidden = true;
   applyBeauty();
-  S.camOn = false; S.face = false; LM = null; S.input = 'pointer'; $('#cam-btn').textContent = L('打开摄像头', 'Camera on'); endCalib();
+  S.camOn = false; S.camLoading = false; S.face = false; LM = null; S.input = 'pointer'; $('#cam-btn').textContent = L('打开摄像头', 'Camera on'); endCalib();
 }
 function fallback(msg) { S.input = 'pointer'; toast(msg); }
 // 新帧：rVFC 的 presentedFrames（一帧只识别一次）
@@ -544,6 +607,15 @@ function applyLang() {
   if (!$('#panel').hidden) renderDiag();
 }
 function setLang(l) { S.lang = l; applyLang(); saveSettings(); }
+$('#cam-s').onchange = e => switchCam(e.target.value);
+function showIntroLoad() {
+  if ((NO_WASM || recFail) && !recDone) { $('#intro-load').classList.add('bad'); setTxt('intro-load-t', L('这个浏览器现在跑不了人脸识别。', 'Face tracking can’t run in this browser right now. ') + edgeTip()); return; }
+  $('#intro-load').classList.remove('bad');
+  setTxt('intro-load-t', loadText()); $('#intro-load-b').style.width = (recDone ? 100 : Math.round(preFrac() * 100)) + '%';
+  $('#intro-load').classList.toggle('ok', recDone);
+}
+const introLoadT = setInterval(() => { showIntroLoad(); if (recDone) clearInterval(introLoadT); }, 150);
+if (!Q.has('video')) initRecognizer().catch(() => {});
 $('#lang-btn').onclick = $('#intro-lang').onclick = () => setLang(S.lang === 'en' ? 'zh' : 'en');
 if (Q.has('dev')) { $('#adv').hidden = false; $('#lat').hidden = false; }   // 手势开关、手感、延迟统计、录屏、自检、键盘：给自己调试用
 $('#go-cam').onclick = () => begin(true);
@@ -695,7 +767,9 @@ function updateDom(tel, now) {
   // 占位提示
   const showPh = (!S.camOn || !S.face) && !(S.camOn && CAL_RUN && S.face);
   $('#ph').hidden = !showPh;
-  if (showPh) {
+  $('#ph-bar').hidden = !S.camLoading;
+  if (S.camLoading) { $('#ph-bar-b').style.width = Math.round(preFrac() * 100) + '%'; setTxt('ph-b', loadText()); setTxt('ph-s', ''); }
+  else if (showPh) {
     if (isCam() && !S.face) { setTxt('ph-b', S.input === 'video' ? L('测试视频里暂时没有脸', 'No face in the test video right now') : (D.backend ? L('看不到脸', 'No face found') : L('加载识别模型…', 'Loading face model…'))); setTxt('ph-s', ''); }
     else { setTxt('ph-b', L('按住拖动', 'Press and drag')); setTxt('ph-s', L('上下张嘴，左右嘟嘴 ↔ 咧嘴', 'Up/down: open · left/right: pucker ↔ smile')); }
   }
@@ -727,7 +801,7 @@ function drawMirror(tel) {
     return [(l[0] + r[0]) / 2, (up[1] + dn[1]) / 2];
   }
   if (S.camOn && CAL_RUN) drawGuide(g);
-  if (S.camOn) return null;
+  if (S.camOn || S.camLoading) return null;
   // 没有摄像头：画一张示意嘴，跟着鼠标 / 手指开合
   const cx = MW / 2, cy = MH * 0.42, sc = Math.min(MW, MH) * 0.24;
   const o = V.open, rd = V.round, wd = V.wide;
