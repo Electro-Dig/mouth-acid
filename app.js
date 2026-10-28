@@ -354,6 +354,8 @@ function camErr(title, detail) {
 }
 function camErrFor(e) {
   const n = e && e.name;
+  if (INAPP) return camErr(L('这个 App 里打不开摄像头', 'The camera is blocked in this app'),
+    L('点右上角 ⋯ → 在浏览器中打开（Chrome / Safari），就能正常用了。', 'Tap ⋯ → Open in browser (Chrome / Safari) and it will work.'));
   if (n === 'NotAllowedError' || n === 'SecurityError') return camErr(L('摄像头被拒绝了', 'Camera access blocked'),
     L('点地址栏里的摄像头 / 锁图标 → 允许使用摄像头，再点“再试一次”。', 'Click the camera or lock icon in the address bar → allow the camera, then Try again.'));
   if (n === 'NotReadableError' || n === 'AbortError' || n === 'TrackStartError') return camErr(L('摄像头被别的软件占着', 'Camera is busy'),
@@ -642,7 +644,7 @@ function setLang(l) { S.lang = l; applyLang(); saveSettings(); }
 $('#cam-s').onchange = e => switchCam(e.target.value);
 // ---- MIDI 输出 ----
 function midiStatus(t) { setTxt('midi-st', t); }
-function midiCC(cc, v) { if (MIDI.out) try { MIDI.out.send([0xB0 + MIDI.ch - 1, cc, v]); MIDI.sent++; } catch (e) {} }
+function midiCC(cc, v) { if (MIDI.out) try { MIDI.out.send([0xB0 + MIDI.ch - 1, cc, v]); MIDI.sent++; MIDI.lastAt = performance.now(); MIDI.lastMsg = 'CH' + MIDI.ch + ' · CC' + cc + ' = ' + v; } catch (e) {} }
 async function midiInit() {
   if (!navigator.requestMIDIAccess) { midiStatus(L('这个浏览器不支持 Web MIDI，请用 Chrome 或 Edge。', 'No Web MIDI in this browser. Use Chrome or Edge.')); return false; }
   try { MIDI.access = MIDI.access || await navigator.requestMIDIAccess({ sysex: false }); }
@@ -658,19 +660,25 @@ function midiPorts() {
   MIDI.last = {};
   midiStatus(outs.length ? L('发往：', 'Sending to: ') + (pick ? pick.name : '') : L('没找到 MIDI 输出口。Windows 用 loopMIDI 建一个口；Mac 在「音频 MIDI 设置」里打开 IAC 驱动。', 'No MIDI outputs. On Windows create a port in loopMIDI; on Mac enable the IAC Driver in Audio MIDI Setup.'));
 }
+function midiPaused() { return !$('#panel').hidden; }   // 设置面板开着 = 正在绑定：别让脸上别的动作抢先被 DAW 抓走
 function midiTick() {
-  if (!MIDI.on || !MIDI.out || MIDI.learn) return;
+  if (!MIDI.on || !MIDI.out || MIDI.learn || midiPaused()) return;
   for (const m of MIDI_MAP) { if (m.k === 'acc') continue; const v = Math.round(127 * clamp01(V[m.k] || 0)); if (MIDI.last[m.cc] !== v) { MIDI.last[m.cc] = v; midiCC(m.cc, v); } }
 }
-function midiAccent() { if (!MIDI.on || MIDI.learn) return; midiCC(80, 127); setTimeout(() => midiCC(80, 0), 120); }
+function midiAccent() { if (!MIDI.on || MIDI.learn || midiPaused()) return; midiCC(80, 127); setTimeout(() => midiCC(80, 0), 120); }
 // 学习：只发这一个 CC，0 → 127 → 0 来回扫两遍（2 秒），这时 DAW 里点 MIDI Learn 就只会抓到它
 // 扫完不重发别的 CC：DAW 的 Learn 可能还开着
 function midiLearn(m) {
   if (!MIDI.on || !MIDI.out) return;
-  MIDI.learn = m; MIDI.learnT = performance.now(); midiStatus(L('正在单独发 ', 'Sending only ') + L(m.zh, m.en) + ' · CC' + m.cc + ' …');
-  const iv = setInterval(() => {
-    const p = (performance.now() - MIDI.learnT) / 2000;
-    if (p >= 1) { clearInterval(iv); midiCC(m.cc, 0); MIDI.last[m.cc] = 0; MIDI.learn = null; midiStatus(L('发往：', 'Sending to: ') + (MIDI.out ? MIDI.out.name : '')); return; }
+  if (MIDI.learnIv) clearInterval(MIDI.learnIv);
+  MIDI.learn = m; MIDI.learnT = performance.now();
+  const name = L(m.zh, m.en) + ' · CC' + m.cc;
+  MIDI.learnIv = setInterval(() => {
+    const e = (performance.now() - MIDI.learnT) / 1000;
+    if (e < 3) { midiStatus(L('3 秒后单独发 ', 'Sending only ') + name + L('，现在去 DAW 里点 Link / Learn …', ' in a moment. Go click Link / Learn in your DAW … ') + Math.ceil(3 - e)); return; }
+    const p = (e - 3) / 3;
+    if (p >= 1) { clearInterval(MIDI.learnIv); MIDI.learnIv = 0; midiCC(m.cc, 0); MIDI.last[m.cc] = 0; MIDI.learn = null; midiStatus(L('发完了：', 'Done: ') + name + L('。DAW 里抓到的应该是这个 CC。', '. Your DAW should have caught this CC.')); return; }
+    midiStatus(L('正在单独发 ', 'Sending only ') + name + ' …');
     midiCC(m.cc, Math.round(127 * (0.5 - 0.5 * Math.cos(p * Math.PI * 4))));
   }, 20);
 }
@@ -690,6 +698,16 @@ $('#midi-port').onchange = e => { MIDI.port = e.target.value; MIDI.out = MIDI.ac
 $('#midi-ch').onchange = e => { MIDI.ch = +e.target.value; MIDI.last = {}; saveSettings(); };
 $('#midi-mute').onchange = e => { MIDI.mute = e.target.checked; midiMuteApply(); saveSettings(); };
 $('#midi-sec').hidden = !MIDI_UI;
+// 顶栏 MIDI 指示：在发 = 绿灯闪；面板开着 / 正在学习 = 暂停（写清楚怎么恢复）
+setInterval(() => {
+  const chip = $('#midichip'); chip.hidden = !(MIDI_UI && MIDI.on);
+  if (chip.hidden) return;
+  const paused = midiPaused() && !MIDI.learn, live = performance.now() - (MIDI.lastAt || 0) < 160;
+  chip.classList.toggle('live', live && !paused); chip.classList.toggle('pause', paused);
+  setTxt('midichip-t', paused ? L('MIDI 暂停', 'MIDI paused') : 'MIDI');
+  $('#midi-pause').hidden = !paused;
+  setTxt('midi-last', MIDI.lastMsg ? L('最近发出：', 'Last sent: ') + MIDI.lastMsg : '');
+}, 120);
 midiUI(); if (MIDI.on) midiInit().then(ok => { MIDI.on = ok; midiUI(); });
 $('#cam-icon').onclick = $('#cam-tip').onclick = () => { const m = $('#cam-menu'); m.hidden = !m.hidden; if (!m.hidden) fillCamPicker(); syncCamWarn(); };
 document.addEventListener('pointerdown', e => { if (!$('#campick').contains(e.target)) $('#cam-menu').hidden = true; });
@@ -722,7 +740,8 @@ const INAPP = /Instagram|FBAN|FBAV|FB_IAB|MicroMessenger|WeChat|Line\/|TikTok|mu
 const IOS = /iPhone|iPad|iPod/.test(UA) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 function envIssues() {
   const out = [], AC = window.AudioContext || window.webkitAudioContext, miss = [];
-  if (INAPP) out.push(['bad', L('你在 App 内置浏览器里（Instagram、微信、小红书等），摄像头多半打不开。点右上角 ⋯ → “在浏览器中打开”。', 'You’re in an in-app browser (Instagram, WeChat…). The camera usually won’t work here. Tap ⋯ → “Open in browser”.'), 'copy']);
+  // App 内置浏览器：很多（比如安卓 Instagram）其实能用，所以只轻轻提一句；真打不开时出错卡片里再说
+  if (INAPP) out.push(['tip', L('如果这里打不开摄像头：点右上角 ⋯ → 在浏览器中打开。', 'Camera not working here? Tap ⋯ → Open in browser.'), 'copy']);
   else if (!window.isSecureContext) out.push(['bad', L('摄像头只能在 https 网址下用。', 'The camera only works on https.')]);
   if (!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)) miss.push(L('摄像头接口', 'camera access'));
   if (NO_WASM) miss.push('WebAssembly');

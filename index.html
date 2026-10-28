@@ -165,6 +165,10 @@ button.cambtn{width:40px;height:40px;min-height:40px;padding:0;position:relative
 #adv{display:flex;flex-direction:column;gap:14px}
 #midi-box{display:flex;flex-direction:column;gap:8px}
 #midi-sec{display:flex;flex-direction:column;gap:14px}
+.midichip{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 12px;border:var(--lw) solid var(--ink);border-radius:999px;font-family:var(--f-num);font-size:12px;font-weight:700;background:var(--card)}
+.midichip i{width:9px;height:9px;border-radius:50%;background:var(--slate);border:1.5px solid var(--ink)}
+.midichip.live i{background:var(--green)} .midichip.pause{background:var(--acid-pale)} .midichip.pause i{background:var(--acid)}
+.midipause{font-size:12.5px;line-height:1.6;padding:8px 10px;border-radius:12px;border:1.5px solid #d9a63a;color:#6b4a08;background:var(--acid-pale)}
 .envwarn{display:flex;flex-direction:column;gap:8px}
 .envwarn p{display:flex;gap:8px;align-items:flex-start;font-size:12.5px;line-height:1.6;padding:8px 10px;border-radius:12px;border:1.5px solid var(--red);color:#9a2f25;background:#fbe9e5}
 .envwarn p.tip{border-color:#d9a63a;color:#6b4a08;background:var(--acid-pale)}
@@ -254,6 +258,7 @@ button.cambtn{width:40px;height:40px;min-height:40px;padding:0;position:relative
     <button class="tog" id="vowel" aria-pressed="false" title="咧嘴时打开第二个共振峰，能唱出 i（303 原机只有一个峰）" data-i18n-title="Smile opens a second formant so it can sing “ee” (the original 303 has one peak)"><span class="dot"></span><span data-i18n="Two peaks">两个峰</span></button>
     <button class="tog" id="drums" aria-pressed="false"><span class="dot"></span><span data-i18n="Drums">鼓</span></button>
     <span class="sp"></span>
+    <span class="midichip" id="midichip" hidden><i></i><span id="midichip-t">MIDI</span></span>
     <span class="lat" id="lat" hidden></span>
     <i class="stdot" id="st-dot" role="status" title="还没开始"></i>
     <button class="langbtn" id="lang-btn" title="中文 / English">EN</button>
@@ -345,12 +350,14 @@ button.cambtn{width:40px;height:40px;min-height:40px;padding:0;position:relative
   <h3>MIDI OUT</h3>
   <label><input type="checkbox" id="midi-on"><span data-i18n="Send mouth moves as MIDI CC (to your DAW)">把嘴型发成 MIDI CC（给 DAW 用）</span></label>
   <div id="midi-box" hidden>
+    <div class="midipause" id="midi-pause" hidden data-i18n="⏸ Paused while this panel is open (so your DAW links the right CC). Close the panel to send again.">⏸ 这个面板开着时暂停发送（方便 DAW 绑定，不会抓错）。关掉面板就恢复。</div>
     <label><span data-i18n="Port">端口</span> <select id="midi-port" style="flex:1;min-width:0"></select></label>
     <label><span data-i18n="Channel">通道</span> <select id="midi-ch"></select></label>
     <label><input type="checkbox" id="midi-mute" checked><span data-i18n="Mute the sound in this page">网页本身不出声</span></label>
-    <div class="note" data-i18n="MIDI Learn: click Learn in your synth, then Learn here — only that CC moves for 2 s.">MIDI Learn：先在合成器里点 Learn，再点这里的“学习”，这 2 秒只动这一个 CC。</div>
+    <div class="note" data-i18n="While this panel is open, live mouth CCs are paused so your DAW can’t grab the wrong one. To link: click Learn here, then within 3 s click Link / Learn on the knob in your DAW — only that CC moves for the next 3 s.">这个面板开着时，嘴型 CC 暂停发送，DAW 不会抓错。绑定：点这里的“学习”，3 秒内去 DAW 旋钮上点 Link / Learn，接下来 3 秒只发这一个 CC。</div>
     <div id="midi-map"></div>
     <div class="note" id="midi-st"></div>
+    <div class="note" id="midi-last"></div>
   </div>
   </div>
   <div id="adv" hidden>
@@ -398,6 +405,6 @@ button.cambtn{width:40px;height:40px;min-height:40px;padding:0;position:relative
   <div class="byline"><span>Built by Electro-Dig</span><span class="soc"><a href="https://www.instagram.com/yunlonggong1/" target="_blank" rel="noopener" aria-label="Instagram" title="Instagram"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.5" cy="6.5" r="1" fill="currentColor" stroke="none"/></svg></a><a href="https://github.com/Electro-Dig" target="_blank" rel="noopener" aria-label="GitHub" title="GitHub"><svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></a><a href="https://space.bilibili.com/52370877" target="_blank" rel="noopener" aria-label="Bilibili" title="Bilibili"><svg width="16" height="15" viewBox="0 0 24 22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M7 2l3 3M17 2l-3 3"/><rect x="2" y="5" width="20" height="15" rx="4"/><path d="M8 11v2M16 11v2"/></svg></a></span></div>
 </div></div>
 <div id="toast" role="status"></div>
-<script type="module" src="app.js?v=23"></script>
+<script type="module" src="app.js?v=25"></script>
 </body>
 </html>
