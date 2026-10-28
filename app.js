@@ -283,7 +283,7 @@ async function startCamera() {
   try { await video.play(); } catch (e) {}
   await startSource('camera');
 }
-const VIRT = /iriun|obs|virtual|droidcam|snap camera|manycam|xsplit|epoccam|ndi|\bcamo\b|broadcast|vcam/i;
+const VIRT = /iriun|obs|virtual|droidcam|snap camera|manycam|xsplit|epoccam|ndi|\bcamo\b|broadcast|vcam|byom/i;
 function openStream(id) {
   const v = { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: isMobile ? 30 : 60 } };
   if (id) v.deviceId = { exact: id }; else v.facingMode = 'user';
@@ -292,17 +292,20 @@ function openStream(id) {
 async function listCams() { try { return (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput'); } catch (e) { return []; } }
 async function fillCamPicker() {
   const cams = await listCams(), tr = stream && stream.getVideoTracks()[0], cur = tr && tr.getSettings().deviceId;
-  for (const sel of [$('#cam-s'), $('#cam-s2')]) {
-    sel.replaceChildren(...cams.map((c, i) => { const o = document.createElement('option'); o.value = c.deviceId; o.textContent = c.label || L('摄像头 ', 'Camera ') + (i + 1); return o; }));
-    if (cur) sel.value = cur;
-  }
+  const sel = $('#cam-s'), name = (c, i) => c.label || L('摄像头 ', 'Camera ') + (i + 1);
+  sel.replaceChildren(...cams.map((c, i) => { const o = document.createElement('option'); o.value = c.deviceId; o.textContent = name(c, i); return o; }));
+  if (cur) sel.value = cur;
+  // 画面左上角的小摄像头图标：点开是摄像头列表
+  const hd = document.createElement('small'); hd.textContent = L('选择摄像头', 'CAMERA');
+  $('#cam-menu').replaceChildren(hd, ...cams.map((c, i) => { const b = document.createElement('button'); b.textContent = name(c, i); b.setAttribute('aria-current', c.deviceId === cur);
+    b.onclick = () => { $('#cam-menu').hidden = true; if (c.deviceId !== cur) switchCam(c.deviceId); }; return b; }));
   $('#cam-pick').hidden = cams.length < 2;
   $('#campick').hidden = !cams.length || !stream;
 }
 async function switchCam(id) {
   S.camId = id; saveSettings();
   if (!stream) return;
-  try { const s2 = await openStream(id); stream.getTracks().forEach(t => t.stop()); stream = s2; video.srcObject = s2; try { await video.play(); } catch (e) {} }
+  try { const s2 = await openStream(id); stream.getTracks().forEach(t => t.stop()); stream = s2; video.srcObject = s2; try { await video.play(); } catch (e) {} S.camAt = performance.now() / 1000; S.facesAt = D.faces; camDarkSince = -1; fillCamPicker(); }
   catch (e) { toast(L('这个摄像头打不开：', 'Can’t open this camera: ') + e.name); fillCamPicker(); }
 }
 async function startVideoFile(url) {
@@ -318,7 +321,7 @@ async function startSource(kind) {
   setStatus('wait', L('加载识别模型…', 'Loading face model…'));
   try { await initRecognizer(); } catch (e) { console.warn(e); S.camLoading = false; stopCamera();
     camErr(L('识别模型没加载上', 'Face model didn’t load'), (IS_EDGE ? edgeTip() : L('多半是网络问题，再试一次；还不行就换 Chrome。', 'Probably the network. Try again; if it still fails, try Chrome.'))); return; }
-  S.camLoading = false; S.camOn = true; S.camAt = performance.now() / 1000; S.input = kind; $('#cam-btn').textContent = L('关闭摄像头', 'Camera off'); applyBeauty();
+  S.camLoading = false; S.camOn = true; S.camAt = performance.now() / 1000; S.facesAt = D.faces; S.input = kind; $('#cam-btn').textContent = L('关闭摄像头', 'Camera off'); applyBeauty();
   lastFrame = -1; latest = { frame: -1, now: 0 }; busy = false; inflight.clear();
   if (video.requestVideoFrameCallback) video.requestVideoFrameCallback(onVFrame); else requestAnimationFrame(pollFrame);
   setStatus('wait', L('找脸…', 'Looking for a face…'));
@@ -624,7 +627,32 @@ function applyLang() {
   if (!$('#panel').hidden) renderDiag();
 }
 function setLang(l) { S.lang = l; applyLang(); saveSettings(); }
-$('#cam-s').onchange = $('#cam-s2').onchange = e => switchCam(e.target.value);
+$('#cam-s').onchange = e => switchCam(e.target.value);
+$('#cam-icon').onclick = $('#cam-tip').onclick = () => { const m = $('#cam-menu'); m.hidden = !m.hidden; if (!m.hidden) fillCamPicker(); syncCamWarn(); };
+document.addEventListener('pointerdown', e => { if (!$('#campick').contains(e.target)) $('#cam-menu').hidden = true; });
+// 摄像头有没有问题：画面全黑 / 一片单色（虚拟摄像头软件没开、镜头盖着）超过 1.5 秒，或者开了 5 秒一张脸都没见过
+const smp = document.createElement('canvas'); smp.width = 16; smp.height = 12; const smpG = smp.getContext('2d', { willReadFrequently: true });
+let camDarkSince = -1;
+function camLooksDead() {
+  if (!stream || video.readyState < 2) return false;
+  try {
+    smpG.drawImage(video, 0, 0, 16, 12); const d = smpG.getImageData(0, 0, 16, 12).data; let m = 0, m2 = 0; const n = d.length / 4;
+    for (let i = 0; i < d.length; i += 4) { const y = 0.3 * d[i] + 0.59 * d[i + 1] + 0.11 * d[i + 2]; m += y; m2 += y * y; }
+    m /= n; const sd = Math.sqrt(Math.max(0, m2 / n - m * m)); return m < 14 || sd < 5;
+  } catch (e) { return false; }
+}
+function syncCamWarn() {
+  const bad = !!S.camBad, menu = !$('#cam-menu').hidden;
+  $('#cam-bang').hidden = !bad; $('#cam-tip').hidden = !bad || menu;
+  $('#cam-tip').textContent = L('画面不对？换一个摄像头', 'No picture? Switch camera');
+}
+setInterval(() => {
+  const live = (S.camOn || S.camLoading) && S.input !== 'video' && !!stream, t = performance.now() / 1000;
+  if (!live) { S.camBad = false; camDarkSince = -1; syncCamWarn(); return; }
+  if (camLooksDead()) { if (camDarkSince < 0) camDarkSince = t; } else camDarkSince = -1;
+  const dark = camDarkSince >= 0 && t - camDarkSince > 1.5, noFace = S.camOn && D.faces === S.facesAt && t - (S.camAt || t) > 5;
+  S.camBad = dark || noFace; syncCamWarn();
+}, 400);
 $('#camerr-retry').onclick = async () => { $('#camerr').hidden = true; try { await initAudio(); } catch (e) {} startCamera(); };
 for (const el of [$('#campick'), $('#camerr')]) el.addEventListener('pointerdown', e => e.stopPropagation());   // 别让画面上的拖动接管了下拉框和按钮
 $('#camerr-ptr').onclick = () => { $('#camerr').hidden = true; S.input = 'pointer'; };
@@ -791,7 +819,7 @@ function updateDom(tel, now) {
   if (S.camLoading) { $('#ph-bar-b').style.width = Math.round(preFrac() * 100) + '%'; setTxt('ph-b', loadText()); setTxt('ph-s', ''); }
   else if (showPh) {
     if (isCam() && !S.face) { setTxt('ph-b', S.input === 'video' ? L('测试视频里暂时没有脸', 'No face in the test video right now') : (D.backend ? L('看不到脸', 'No face found') : L('加载识别模型…', 'Loading face model…')));
-      setTxt('ph-s', S.input === 'camera' && !D.faces && performance.now() / 1000 - (S.camAt || 0) > 5 ? L('画面不对？点左上角换个摄像头 ↖', 'Wrong picture? Switch camera at the top-left ↖') : ''); }
+      setTxt('ph-s', S.camBad ? L('画面不对？点左上角的摄像头图标换一个 ↖', 'Wrong picture? Tap the camera icon at the top-left ↖') : ''); }
     else { setTxt('ph-b', L('按住拖动', 'Press and drag')); setTxt('ph-s', L('上下张嘴，左右嘟嘴 ↔ 咧嘴', 'Up/down: open · left/right: pucker ↔ smile')); }
   }
   if (now - uiT > 250) {
