@@ -266,12 +266,13 @@ async function initMain() {
 
 async function startCamera() {
   if (S.testVideo) return startVideoFile(S.testVideo);
-  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { fallback(L('这个浏览器拿不到摄像头（需要 https），先用鼠标 / 手指玩', 'This browser can’t open the camera (needs https). Use mouse / touch for now.')); return; }
+  $('#camerr').hidden = true;
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { camErr(L('这个浏览器拿不到摄像头', 'This browser can’t open the camera'), L('需要 https 和较新的浏览器（Chrome / Edge / Safari）。', 'It needs https and a recent browser (Chrome / Edge / Safari).')); return; }
   setStatus('wait', L('打开摄像头…', 'Opening camera…'));
   let err = null;
   try { stream = await openStream(S.camId); } catch (e) { err = e; }
   if (!stream && S.camId) { try { stream = await openStream(''); err = null; } catch (e) { err = e; } }   // 上次选的摄像头拔掉了
-  if (!stream) { const e = err; fallback(e.name === 'NotAllowedError' ? L('没有摄像头权限，先用鼠标 / 手指玩', 'No camera permission. Use mouse / touch for now.') : L('没找到摄像头（' + e.name + '），先用鼠标 / 手指玩', 'No camera found (' + e.name + '). Use mouse / touch for now.')); return; }
+  if (!stream) { camErrFor(err); return; }
   // 默认给的是虚拟摄像头（Iriun / OBS 之类，软件没开就只有一张提示图）而且还有别的摄像头：换成真的那个（Edge 上实际遇到）
   const t0 = stream.getVideoTracks()[0];
   if (!S.camId && t0 && VIRT.test(t0.label)) {
@@ -290,10 +291,13 @@ function openStream(id) {
 }
 async function listCams() { try { return (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput'); } catch (e) { return []; } }
 async function fillCamPicker() {
-  const cams = await listCams(), sel = $('#cam-s'), tr = stream && stream.getVideoTracks()[0], cur = tr && tr.getSettings().deviceId;
-  sel.replaceChildren(...cams.map((c, i) => { const o = document.createElement('option'); o.value = c.deviceId; o.textContent = c.label || L('摄像头 ', 'Camera ') + (i + 1); return o; }));
-  if (cur) sel.value = cur;
+  const cams = await listCams(), tr = stream && stream.getVideoTracks()[0], cur = tr && tr.getSettings().deviceId;
+  for (const sel of [$('#cam-s'), $('#cam-s2')]) {
+    sel.replaceChildren(...cams.map((c, i) => { const o = document.createElement('option'); o.value = c.deviceId; o.textContent = c.label || L('摄像头 ', 'Camera ') + (i + 1); return o; }));
+    if (cur) sel.value = cur;
+  }
   $('#cam-pick').hidden = cams.length < 2;
+  $('#campick').hidden = !cams.length || !stream;
 }
 async function switchCam(id) {
   S.camId = id; saveSettings();
@@ -312,24 +316,37 @@ async function startVideoFile(url) {
 async function startSource(kind) {
   S.camLoading = true; video.classList.add('on');
   setStatus('wait', L('加载识别模型…', 'Loading face model…'));
-  try { await initRecognizer(); } catch (e) { console.warn(e); S.camLoading = false; stopCamera(); fallback(L('识别模型没加载上（网络？），先用鼠标 / 手指玩', 'Face model failed to load (network?). Use mouse / touch for now.') + ' ' + edgeTip()); return; }
-  S.camLoading = false; S.camOn = true; S.input = kind; $('#cam-btn').textContent = L('关闭摄像头', 'Camera off'); applyBeauty();
+  try { await initRecognizer(); } catch (e) { console.warn(e); S.camLoading = false; stopCamera();
+    camErr(L('识别模型没加载上', 'Face model didn’t load'), (IS_EDGE ? edgeTip() : L('多半是网络问题，再试一次；还不行就换 Chrome。', 'Probably the network. Try again; if it still fails, try Chrome.'))); return; }
+  S.camLoading = false; S.camOn = true; S.camAt = performance.now() / 1000; S.input = kind; $('#cam-btn').textContent = L('关闭摄像头', 'Camera off'); applyBeauty();
   lastFrame = -1; latest = { frame: -1, now: 0 }; busy = false; inflight.clear();
   if (video.requestVideoFrameCallback) video.requestVideoFrameCallback(onVFrame); else requestAnimationFrame(pollFrame);
   setStatus('wait', L('找脸…', 'Looking for a face…'));
   if (kind === 'camera' && !calStored()) startCalib();
   else if (kind === 'camera') toast(L('用上次的校准。换了人或位置，点“重新校准”', 'Using your last calibration. New person or spot? Recalibrate in ⚙.'));
   if (BENCH) startBench();
-  // 8 秒还没见过脸：多半是选错了摄像头
-  if (kind === 'camera') setTimeout(() => { if (S.camOn && S.input === 'camera' && !D.faces) toast(L('看不到脸。是不是选错了摄像头？在 ⚙ 设置里换一个', 'Can’t see a face. Wrong camera? Switch it in ⚙ Settings.')); }, 8000);
 }
 function stopCamera() {
-  if (stream) stream.getTracks().forEach(t => t.stop()); stream = null;
+  if (stream) stream.getTracks().forEach(t => t.stop()); stream = null; $('#campick').hidden = true;
   video.srcObject = null; video.removeAttribute('src'); video.load(); video.classList.remove('on'); $('#testvid').hidden = true;
   applyBeauty();
   S.camOn = false; S.camLoading = false; S.face = false; LM = null; S.input = 'pointer'; $('#cam-btn').textContent = L('打开摄像头', 'Camera on'); endCalib();
 }
 function fallback(msg) { S.input = 'pointer'; toast(msg); }
+function camErr(title, detail) {
+  S.input = 'pointer'; setStatus('', L('鼠标 / 手指', 'Mouse / touch'));
+  $('#camerr-t').textContent = title; $('#camerr-d').textContent = detail; $('#camerr').hidden = false;
+}
+function camErrFor(e) {
+  const n = e && e.name;
+  if (n === 'NotAllowedError' || n === 'SecurityError') return camErr(L('摄像头被拒绝了', 'Camera access blocked'),
+    L('点地址栏里的摄像头 / 锁图标 → 允许使用摄像头，再点“再试一次”。', 'Click the camera or lock icon in the address bar → allow the camera, then Try again.'));
+  if (n === 'NotReadableError' || n === 'AbortError' || n === 'TrackStartError') return camErr(L('摄像头被别的软件占着', 'Camera is busy'),
+    L('Zoom、Teams、OBS、微信之类可能正在用摄像头。关掉它们，再点“再试一次”。', 'Another app (Zoom, Teams, OBS…) may be using it. Close it, then Try again.'));
+  if (n === 'NotFoundError' || n === 'OverconstrainedError' || n === 'DevicesNotFoundError') return camErr(L('没找到摄像头', 'No camera found'),
+    L('插上摄像头再点“再试一次”，或者先用鼠标 / 手指玩。', 'Plug one in and Try again, or play with mouse / touch.'));
+  camErr(L('摄像头打不开', 'Can’t open the camera'), (n ? '(' + n + ') ' : '') + L('再试一次；还不行就换 Chrome。', 'Try again; if it still fails, try Chrome.'));
+}
 // 新帧：rVFC 的 presentedFrames（一帧只识别一次）
 // 新帧用摄像头的采集时间认（文件用 mediaTime）：高刷屏上同一帧可能被呈现好几次，presentedFrames 会跟着加（实测帧间隔中位 8.2 ms）
 function onVFrame(now, meta) {
@@ -607,7 +624,10 @@ function applyLang() {
   if (!$('#panel').hidden) renderDiag();
 }
 function setLang(l) { S.lang = l; applyLang(); saveSettings(); }
-$('#cam-s').onchange = e => switchCam(e.target.value);
+$('#cam-s').onchange = $('#cam-s2').onchange = e => switchCam(e.target.value);
+$('#camerr-retry').onclick = async () => { $('#camerr').hidden = true; try { await initAudio(); } catch (e) {} startCamera(); };
+for (const el of [$('#campick'), $('#camerr')]) el.addEventListener('pointerdown', e => e.stopPropagation());   // 别让画面上的拖动接管了下拉框和按钮
+$('#camerr-ptr').onclick = () => { $('#camerr').hidden = true; S.input = 'pointer'; };
 function showIntroLoad() {
   if ((NO_WASM || recFail) && !recDone) { $('#intro-load').classList.add('bad'); setTxt('intro-load-t', L('这个浏览器现在跑不了人脸识别。', 'Face tracking can’t run in this browser right now. ') + edgeTip()); return; }
   $('#intro-load').classList.remove('bad');
@@ -770,7 +790,8 @@ function updateDom(tel, now) {
   $('#ph-bar').hidden = !S.camLoading;
   if (S.camLoading) { $('#ph-bar-b').style.width = Math.round(preFrac() * 100) + '%'; setTxt('ph-b', loadText()); setTxt('ph-s', ''); }
   else if (showPh) {
-    if (isCam() && !S.face) { setTxt('ph-b', S.input === 'video' ? L('测试视频里暂时没有脸', 'No face in the test video right now') : (D.backend ? L('看不到脸', 'No face found') : L('加载识别模型…', 'Loading face model…'))); setTxt('ph-s', ''); }
+    if (isCam() && !S.face) { setTxt('ph-b', S.input === 'video' ? L('测试视频里暂时没有脸', 'No face in the test video right now') : (D.backend ? L('看不到脸', 'No face found') : L('加载识别模型…', 'Loading face model…')));
+      setTxt('ph-s', S.input === 'camera' && !D.faces && performance.now() / 1000 - (S.camAt || 0) > 5 ? L('画面不对？点左上角换个摄像头 ↖', 'Wrong picture? Switch camera at the top-left ↖') : ''); }
     else { setTxt('ph-b', L('按住拖动', 'Press and drag')); setTxt('ph-s', L('上下张嘴，左右嘟嘴 ↔ 咧嘴', 'Up/down: open · left/right: pucker ↔ smile')); }
   }
   if (now - uiT > 250) {
