@@ -93,10 +93,21 @@ const S = {
   camOn: false, face: false, lastFaceAt: -1e9, testVideo: Q.get('video'),
   ptr: { down: false, x: 0.5, y: 0.75, id: null },
 };
-const saveSettings = () => store.set('lip303-settings', { camId: S.camId, lang: S.lang, vowel: S.vowel, wave: S.wave, oct: S.oct, smooth: S.smooth, beauty: S.beauty, gest: S.gest });
+const saveSettings = () => store.set('lip303-settings', { midiOn: MIDI.on, midiPort: MIDI.port, midiCh: MIDI.ch, midiMute: MIDI.mute, camId: S.camId, lang: S.lang, vowel: S.vowel, wave: S.wave, oct: S.oct, smooth: S.smooth, beauty: S.beauty, gest: S.gest });
+/* ---------------- MIDI 输出：嘴型 → CC，给 DAW 里任何合成器 / 效果做 MIDI Learn（acid 靠的是参数变化，正好是 CC） ----------------
+   映射沿用 GM2 惯例：CC74 = brightness（cutoff），CC71 = resonance；咧嘴给 CC1（mod wheel，多数合成器默认就接），挑眉给 CC91（混响量）。
+   重音：CC80 打一下 127，0.12 秒后回 0。只在数值变化时发。 */
+const MIDI_MAP = [
+  { k: 'open', cc: 74, zh: '张嘴', en: 'Open' }, { k: 'round', cc: 71, zh: '嘟嘴', en: 'Pucker' }, { k: 'wide', cc: 1, zh: '咧嘴', en: 'Smile' },
+  { k: 'brow', cc: 91, zh: '挑眉', en: 'Brows' }, { k: 'acc', cc: 80, zh: '重音', en: 'Accent' },
+];
+const MIDI_UI = Q.has('midi') && /^(localhost|127\.0\.0\.1)$/.test(location.hostname);   // 本地测试中：只在本机 + ?midi 才出现
+const MIDI = { access: null, out: null, on: MIDI_UI && !!saved.midiOn, port: saved.midiPort || '', ch: saved.midiCh || 1, mute: saved.midiMute !== false, last: {}, learn: null, learnT: 0, sent: 0 };
 const isCam = () => S.input === 'camera' || S.input === 'video';
 // 中英文：页面上的元素在 data-i18n 里直接写英文；程序里的字用 L('中文', 'English')
-const L = (zh, en) => S.lang === 'en' ? en : zh;
+// 英文里的弯引号换成直的：页面字体先用中文字体，弯引号会按全角排（“Can’ t”）
+const ascq = t => typeof t === 'string' ? t.replace(/[’‘]/g, "'").replace(/[“”]/g, '"') : t;
+const L = (zh, en) => S.lang === 'en' ? ascq(en) : zh;
 const FL = (zh, en, neutral) => S.clean ? neutral : L(zh, en);   // 弹出提示：录屏模式里不分语言
 
 // 校准：原始特征的“静止值”和“最大值”
@@ -188,7 +199,7 @@ function synthParams() {
     gate: S.gate ? 1 : 0, lvl: S.mode === 'free' ? 0.7 + 0.3 * o : 1, drums: S.drums ? 1 : 0, wave: S.wave, vol: 1,
   };
 }
-function push() { if (A.node) A.node.port.postMessage({ type: 'p', p: synthParams() }); }
+function push() { if (A.node) A.node.port.postMessage({ type: 'p', p: synthParams() }); midiTick(); }
 function initAudio() { if (!A.p) A.p = makeAudio(); return A.p.then(() => { if (A.ctx.state !== 'running') return A.ctx.resume(); }); }
 // 干声 → 高通 25 Hz → 压缩 → 限幅；混响送入 → 卷积混响（1.8 秒，程序生成）→ 压缩。照“Acid 的八种玩法”的链路
 function buildChain(ctx, node, dest) {
@@ -201,13 +212,14 @@ function buildChain(ctx, node, dest) {
   const lim = ctx.createDynamicsCompressor(); lim.threshold.value = -2.5; lim.ratio.value = 20; lim.knee.value = 0; lim.attack.value = 0.001; lim.release.value = 0.08;
   const out = ctx.createGain(); out.gain.value = 0.8;
   node.connect(hp, 0); hp.connect(comp); node.connect(rev, 1); rev.connect(wet); wet.connect(comp); comp.connect(lim); lim.connect(out); out.connect(dest);
+  return out;
 }
 const procOpts = extra => ({ numberOfInputs: 0, numberOfOutputs: 2, outputChannelCount: [2, 2], processorOptions: { presets: PRESETS.map(P => ({ steps: P.steps, p: P.p })), ...extra } });
 async function makeAudio() {
   const ctx = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: 'interactive' });
   await ctx.audioWorklet.addModule('worklet.js?v=6');
   const node = new AudioWorkletNode(ctx, 'lip303', procOpts({ init: synthParams() }));
-  buildChain(ctx, node, ctx.destination);
+  A.out = buildChain(ctx, node, ctx.destination); midiMuteApply();
   node.port.onmessage = e => { A.tel = e.data; };
   A.ctx = ctx; A.node = node;
 }
@@ -393,7 +405,7 @@ function dispatch() {
 function onResult(id, pts, bs, inference, d) {
   const m = inflight.get(id); inflight.delete(id); busy = false;
   const now = performance.now();
-  D.inf.push(inference); D.stamps.push(now); D.frames++;
+  D.inf.push(inference); D.stamps.push(now); D.frames++; S.infAvg = S.infAvg ? S.infAvg * 0.95 + inference * 0.05 : inference;
   if (pts && d) { D.infBy[d].push(inference); autoBackend(d); }
   D.vsync.push(Math.abs(inference - Math.round(inference / 16.667) * 16.667));   // ≲1.5 ms：推理被屏幕刷新节拍卡住
   onFace(pts, bs || {}, (m ? m.frameAt : now) / 1000);
@@ -466,7 +478,7 @@ function tick(t) {
   }
   push();
 }
-function accent(src) { initAudio(); if (A.node) A.node.port.postMessage({ type: 'acc' }); lastAccAt = lastTick || performance.now() / 1000; hit('g-acc'); flash(src === 'nod' ? FL('点头 · 重音', 'Nod · accent', 'ACCENT') : FL('重音', 'Accent', 'ACCENT'), 'acc'); }
+function accent(src) { midiAccent(); initAudio(); if (A.node) A.node.port.postMessage({ type: 'acc' }); lastAccAt = lastTick || performance.now() / 1000; hit('g-acc'); flash(src === 'nod' ? FL('点头 · 重音', 'Nod · accent', 'ACCENT') : FL('重音', 'Accent', 'ACCENT'), 'acc'); }
 function setPattern(i) {
   S.pat = (i + NPAT) % NPAT; if (A.node) A.node.port.postMessage({ type: 'pat', i: S.pat });
   document.querySelectorAll('#pats button').forEach(b => b.setAttribute('aria-pressed', +b.dataset.p === S.pat));
@@ -610,24 +622,75 @@ const tr = d => { S.manTr = Math.max(-5, Math.min(5, S.manTr + d)); push(); { co
 
 async function begin(cam) {
   $('#intro').hidden = true;
-  try { await initAudio(); } catch (e) { console.error(e); toast(L('声音没能启动：', 'Audio failed to start: ') + e.message); }
+  try { await initAudio(); S.audioErr = null; } catch (e) { console.error(e); S.audioErr = e; }
   if (cam) await startCamera(); else { S.input = 'pointer'; toast(L('在画面里按住拖：上下 = 张嘴，左右 = 嘟嘴 ↔ 咧嘴', 'Press and drag in the picture: up/down = open, left/right = pucker ↔ smile')); }
 }
 function setWideLabel() { $('#ml-wide').textContent = S.vowel ? L('咧嘴 → F2', 'Smile → F2') : L('咧嘴 → ENV', 'Smile → ENV'); }
 function applyLang() {
   const en = S.lang === 'en';
   document.documentElement.lang = en ? 'en' : 'zh-CN';
-  document.querySelectorAll('[data-i18n]').forEach(el => { if (el.dataset.zh == null) el.dataset.zh = el.innerHTML; el.innerHTML = en ? el.dataset.i18n : el.dataset.zh; });
+  document.querySelectorAll('[data-i18n]').forEach(el => { if (el.dataset.zh == null) el.dataset.zh = el.innerHTML; el.innerHTML = en ? ascq(el.dataset.i18n) : el.dataset.zh; });
   document.querySelectorAll('[data-i18n-title]').forEach(el => { if (el.dataset.zhTitle == null) el.dataset.zhTitle = el.title; el.title = en ? el.dataset.i18nTitle : el.dataset.zhTitle; });
   $('#lang-btn').textContent = en ? '中文' : 'EN'; $('#intro-lang').textContent = en ? '中文' : 'EN';
   $('#g-wink-b').textContent = S.mode === 'seq' ? L('换音型', 'Pattern') : L('换波形', 'Wave');
   $('#cam-btn').textContent = S.camOn ? L('关闭摄像头', 'Camera off') : L('打开摄像头', 'Camera on');
-  setWideLabel(); for (const k in lastTxt) delete lastTxt[k];
+  setWideLabel(); midiUI(); for (const k in lastTxt) delete lastTxt[k];
   if (CAL_RUN) showCalStep();
   if (!$('#panel').hidden) renderDiag();
 }
 function setLang(l) { S.lang = l; applyLang(); saveSettings(); }
 $('#cam-s').onchange = e => switchCam(e.target.value);
+// ---- MIDI 输出 ----
+function midiStatus(t) { setTxt('midi-st', t); }
+function midiCC(cc, v) { if (MIDI.out) try { MIDI.out.send([0xB0 + MIDI.ch - 1, cc, v]); MIDI.sent++; } catch (e) {} }
+async function midiInit() {
+  if (!navigator.requestMIDIAccess) { midiStatus(L('这个浏览器不支持 Web MIDI，请用 Chrome 或 Edge。', 'No Web MIDI in this browser. Use Chrome or Edge.')); return false; }
+  try { MIDI.access = MIDI.access || await navigator.requestMIDIAccess({ sysex: false }); }
+  catch (e) { midiStatus(L('MIDI 权限被拒绝了：点地址栏左边的图标允许 MIDI。', 'MIDI permission denied. Allow it from the icon in the address bar.')); return false; }
+  MIDI.access.onstatechange = midiPorts; midiPorts(); return true;
+}
+function midiPorts() {
+  const outs = [...MIDI.access.outputs.values()], sel = $('#midi-port');
+  sel.replaceChildren(...outs.map(o => { const op = document.createElement('option'); op.value = o.id; op.textContent = o.name; return op; }));
+  // 默认挑虚拟口（loopMIDI / IAC），不挑系统自带的 GS 波表
+  const pick = outs.find(o => o.id === MIDI.port) || outs.find(o => /loopmidi|iac|virtual|bus/i.test(o.name)) || outs.find(o => !/wavetable|gs synth/i.test(o.name)) || outs[0];
+  MIDI.out = pick || null; if (pick) sel.value = pick.id;
+  MIDI.last = {};
+  midiStatus(outs.length ? L('发往：', 'Sending to: ') + (pick ? pick.name : '') : L('没找到 MIDI 输出口。Windows 用 loopMIDI 建一个口；Mac 在「音频 MIDI 设置」里打开 IAC 驱动。', 'No MIDI outputs. On Windows create a port in loopMIDI; on Mac enable the IAC Driver in Audio MIDI Setup.'));
+}
+function midiTick() {
+  if (!MIDI.on || !MIDI.out || MIDI.learn) return;
+  for (const m of MIDI_MAP) { if (m.k === 'acc') continue; const v = Math.round(127 * clamp01(V[m.k] || 0)); if (MIDI.last[m.cc] !== v) { MIDI.last[m.cc] = v; midiCC(m.cc, v); } }
+}
+function midiAccent() { if (!MIDI.on || MIDI.learn) return; midiCC(80, 127); setTimeout(() => midiCC(80, 0), 120); }
+// 学习：只发这一个 CC，0 → 127 → 0 来回扫两遍（2 秒），这时 DAW 里点 MIDI Learn 就只会抓到它
+// 扫完不重发别的 CC：DAW 的 Learn 可能还开着
+function midiLearn(m) {
+  if (!MIDI.on || !MIDI.out) return;
+  MIDI.learn = m; MIDI.learnT = performance.now(); midiStatus(L('正在单独发 ', 'Sending only ') + L(m.zh, m.en) + ' · CC' + m.cc + ' …');
+  const iv = setInterval(() => {
+    const p = (performance.now() - MIDI.learnT) / 2000;
+    if (p >= 1) { clearInterval(iv); midiCC(m.cc, 0); MIDI.last[m.cc] = 0; MIDI.learn = null; midiStatus(L('发往：', 'Sending to: ') + (MIDI.out ? MIDI.out.name : '')); return; }
+    midiCC(m.cc, Math.round(127 * (0.5 - 0.5 * Math.cos(p * Math.PI * 4))));
+  }, 20);
+}
+function midiMuteApply() { if (A.out && A.ctx) A.out.gain.setTargetAtTime(MIDI.on && MIDI.mute ? 0 : 0.8, A.ctx.currentTime, 0.03); }
+function midiUI() {
+  $('#midi-on').checked = MIDI.on; $('#midi-box').hidden = !MIDI.on; $('#midi-mute').checked = MIDI.mute;
+  $('#midi-ch').replaceChildren(...Array.from({ length: 16 }, (_, i) => { const o = document.createElement('option'); o.value = i + 1; o.textContent = i + 1; return o; })); $('#midi-ch').value = MIDI.ch;
+  $('#midi-map').replaceChildren(...MIDI_MAP.map(m => { const r = document.createElement('div'); r.className = 'mrow';
+    const n = document.createElement('span'); n.textContent = L(m.zh, m.en) + ' → CC' + m.cc;
+    const b = document.createElement('button'); b.textContent = L('学习', 'Learn'); b.onclick = () => midiLearn(m); r.append(n, b); return r; }));
+}
+$('#midi-on').onchange = async e => {
+  MIDI.on = e.target.checked && await midiInit(); if (!MIDI.on) e.target.checked = false;
+  $('#midi-box').hidden = !MIDI.on; MIDI.last = {}; midiMuteApply(); saveSettings();
+};
+$('#midi-port').onchange = e => { MIDI.port = e.target.value; MIDI.out = MIDI.access && MIDI.access.outputs.get(MIDI.port) || null; MIDI.last = {}; midiStatus(L('发往：', 'Sending to: ') + (MIDI.out ? MIDI.out.name : '')); saveSettings(); };
+$('#midi-ch').onchange = e => { MIDI.ch = +e.target.value; MIDI.last = {}; saveSettings(); };
+$('#midi-mute').onchange = e => { MIDI.mute = e.target.checked; midiMuteApply(); saveSettings(); };
+$('#midi-sec').hidden = !MIDI_UI;
+midiUI(); if (MIDI.on) midiInit().then(ok => { MIDI.on = ok; midiUI(); });
 $('#cam-icon').onclick = $('#cam-tip').onclick = () => { const m = $('#cam-menu'); m.hidden = !m.hidden; if (!m.hidden) fillCamPicker(); syncCamWarn(); };
 document.addEventListener('pointerdown', e => { if (!$('#campick').contains(e.target)) $('#cam-menu').hidden = true; });
 // 摄像头有没有问题：画面全黑 / 一片单色（虚拟摄像头软件没开、镜头盖着）超过 1.5 秒，或者开了 5 秒一张脸都没见过
@@ -638,7 +701,7 @@ function camLooksDead() {
   try {
     smpG.drawImage(video, 0, 0, 16, 12); const d = smpG.getImageData(0, 0, 16, 12).data; let m = 0, m2 = 0; const n = d.length / 4;
     for (let i = 0; i < d.length; i += 4) { const y = 0.3 * d[i] + 0.59 * d[i + 1] + 0.11 * d[i + 2]; m += y; m2 += y * y; }
-    m /= n; const sd = Math.sqrt(Math.max(0, m2 / n - m * m)); return m < 14 || sd < 5;
+    m /= n; const sd = Math.sqrt(Math.max(0, m2 / n - m * m)); S.camLum = m; return m < 14 || sd < 5;
   } catch (e) { return false; }
 }
 function syncCamWarn() {
@@ -653,6 +716,45 @@ setInterval(() => {
   const dark = camDarkSince >= 0 && t - camDarkSince > 1.5, noFace = S.camOn && D.faces === S.facesAt && t - (S.camAt || t) > 5;
   S.camBad = dark || noFace; syncCamWarn();
 }, 400);
+/* ---------------- 环境检查：打开网页就看，有问题直接写在开始页上（附带怎么办） ---------------- */
+const UA = navigator.userAgent;
+const INAPP = /Instagram|FBAN|FBAV|FB_IAB|MicroMessenger|WeChat|Line\/|TikTok|musical_ly|Bytedance|Weibo|QQ\/|XiaoHongShu|xhsdiscover|Snapchat|Twitter|LinkedInApp/i.test(UA);
+const IOS = /iPhone|iPad|iPod/.test(UA) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+function envIssues() {
+  const out = [], AC = window.AudioContext || window.webkitAudioContext, miss = [];
+  if (INAPP) out.push(['bad', L('你在 App 内置浏览器里（Instagram、微信、小红书等），摄像头多半打不开。点右上角 ⋯ → “在浏览器中打开”。', 'You’re in an in-app browser (Instagram, WeChat…). The camera usually won’t work here. Tap ⋯ → “Open in browser”.'), 'copy']);
+  else if (!window.isSecureContext) out.push(['bad', L('摄像头只能在 https 网址下用。', 'The camera only works on https.')]);
+  if (!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)) miss.push(L('摄像头接口', 'camera access'));
+  if (NO_WASM) miss.push('WebAssembly');
+  if (!AC || !('audioWorklet' in AC.prototype)) miss.push('AudioWorklet');
+  if (miss.length && !INAPP) out.push(['bad', L('这个浏览器缺少：', 'This browser is missing: ') + miss.join(L('、', ', ')) + L('。', '. ') + (IS_EDGE && NO_WASM ? edgeTip() : L('请用最新版 Chrome、Edge 或 Safari。', 'Please use the latest Chrome, Edge or Safari.'))]);
+  if (IOS) out.push(['tip', L('iPhone 没声音？把机身侧面的静音开关拨开。', 'No sound on iPhone? Turn off silent mode (the side switch).')]);
+  return out;
+}
+function showEnv() {
+  const box = $('#envwarn'), items = envIssues();
+  box.hidden = !items.length;
+  box.replaceChildren(...items.map(([kind, text, act]) => {
+    const p = document.createElement('p'); p.className = kind; const t = document.createElement('span'); t.textContent = text; p.append(t);
+    if (act === 'copy') { const b = document.createElement('button'); b.textContent = L('复制链接', 'Copy link');
+      b.onclick = async () => { try { await navigator.clipboard.writeText(location.href); b.textContent = L('已复制', 'Copied'); } catch (e) { prompt(L('复制这个链接，到浏览器里打开：', 'Copy this link and open it in your browser:'), location.href); } }; p.append(b); }
+    return p;
+  }));
+}
+showEnv();
+// 用的时候：画面右上角一条提示（按轻重只显示一条）——声音没起来 / 光线太暗 / 设备太慢
+let slowSince = -1;
+setInterval(() => {
+  const t = performance.now() / 1000, el = $('#mwarn'), cam = S.camOn && S.input === 'camera';
+  if (cam && S.infAvg > 80) { if (slowSince < 0) slowSince = t; } else slowSince = -1;
+  let msg = '', act = null;
+  if (S.audioErr) { msg = L('声音没起来，点这里再试一次。还不行就换 Chrome。', 'Sound didn’t start. Tap here to retry; if it still fails, try Chrome.'); act = 'audio'; }
+  else if (A.ctx && A.ctx.state === 'suspended' && S.input !== 'none') { msg = L('浏览器把声音停了，点这里打开。', 'The browser paused the sound. Tap here to turn it on.'); act = 'audio'; }
+  else if (cam && !S.face && !S.camBad && S.camLum != null && S.camLum < 45 && t - (S.camAt || t) > 3) msg = L('画面有点暗，识别不到脸。开个灯，或者面向光源。', 'It’s a bit dark to find your face. Turn on a light or face a window.');
+  else if (slowSince >= 0 && t - slowSince > 4) msg = L('这台设备识别得有点慢（每帧 ', 'Face tracking is slow on this device (') + Math.round(S.infAvg) + L(' ms），动作会跟不上。关掉其他标签页，或者换台电脑用 Chrome。', ' ms per frame). Close other tabs, or try Chrome on a computer.');
+  el.hidden = !msg; if (msg && el.textContent !== msg) el.textContent = msg; el.dataset.act = act || '';
+}, 500);
+$('#mwarn').onclick = async () => { if ($('#mwarn').dataset.act !== 'audio') return; try { A.p = A.p && !S.audioErr ? A.p : null; await initAudio(); S.audioErr = null; } catch (e) { S.audioErr = e; } };
 $('#camerr-retry').onclick = async () => { $('#camerr').hidden = true; try { await initAudio(); } catch (e) {} startCamera(); };
 for (const el of [$('#campick'), $('#camerr')]) el.addEventListener('pointerdown', e => e.stopPropagation());   // 别让画面上的拖动接管了下拉框和按钮
 $('#camerr-ptr').onclick = () => { $('#camerr').hidden = true; S.input = 'pointer'; };
